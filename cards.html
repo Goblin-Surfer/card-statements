@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>カード設定 | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header {
+    box-sizing: border-box;
+    padding: 0 24px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: #FFFFFF;
+    border-bottom: 1px solid var(--border);
+  }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a {
+    display: flex; align-items: center; padding: 0 12px; height: 64px;
+    font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub);
+    border-bottom: 3px solid transparent; white-space: nowrap;
+  }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  p.lead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+
+  .notice {
+    box-sizing: border-box; padding: 14px 16px;
+    background: #EAF1FB; border: 1px solid #CBDFF5; border-radius: 10px;
+    font-size: 13px; line-height: 1.6; color: #1F4E8C;
+  }
+  .error-banner {
+    box-sizing: border-box; padding: 12px 14px;
+    background: var(--error-bg); color: var(--error-text);
+    border-radius: 10px; font-size: 13px; line-height: 1.6;
+  }
+
+  section.panel {
+    box-sizing: border-box; background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; overflow: hidden;
+  }
+  .panel-title { padding: 20px 24px 4px; font-size: 16px; font-weight: 700; }
+
+  .row {
+    display: flex; align-items: center; gap: 16px; padding: 14px 24px;
+    border-top: 1px solid #ECE6D8; flex-wrap: wrap;
+  }
+  .row.head {
+    border-top: none; border-bottom: 1px solid #C9C2B2;
+    font-size: 12px; font-weight: 700; color: var(--text-muted);
+  }
+  .col-active { width: 56px; flex-shrink: 0; }
+  .col-card { width: 260px; flex-shrink: 0; }
+  .col-closing { width: 120px; flex-shrink: 0; }
+  .col-payment { width: 110px; flex-shrink: 0; }
+  .col-actions { flex: 1; display: flex; justify-content: flex-end; gap: 10px; }
+
+  .switch {
+    width: 44px; height: 24px; border: none; border-radius: 12px; position: relative;
+    cursor: pointer; padding: 0; background: var(--border-light);
+  }
+  .switch.on { background: var(--blue); }
+  .switch .thumb {
+    position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    transition: left 0.1s ease;
+  }
+  .switch.on .thumb { left: 22px; }
+
+  .card-name { font-size: 14px; font-weight: 700; }
+  .card-sub { font-size: 12px; color: var(--text-muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #8A7F63; flex-shrink: 0; display: inline-block; }
+
+  input[type=text], input[type=number], select {
+    height: 36px; box-sizing: border-box; padding: 0 10px;
+    border: 1.5px solid var(--border-light); border-radius: 8px; font-size: 13px; background: #FFFFFF;
+  }
+  input.name-input { height: 36px; width: 100%; }
+
+  button.btn { height: 36px; padding: 0 14px; border: 1px solid var(--border-light); border-radius: 8px;
+    background: #FFFFFF; color: var(--text-sub); font-size: 13px; font-weight: 500; cursor: pointer; }
+  button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
+  button.btn-danger { border: none; background: none; color: #B4483A; font-weight: 500; text-decoration: underline; cursor: pointer; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+
+  .add-row {
+    display: flex; align-items: flex-start; gap: 16px; padding: 16px 24px;
+    border-top: 1px dashed #C9C2B2; background: #FAF8F2; flex-wrap: wrap;
+  }
+  .add-field { display: flex; flex-direction: column; gap: 6px; }
+  .field-note { font-size: 12px; color: var(--text-muted); }
+
+  .hidden { display: none !important; }
+  .muted { color: var(--text-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">カード利用明細</span>
+    <nav aria-label="メイン">
+      <a href="./list.html">明細一覧</a>
+      <a href="./input.html">手入力</a>
+      <a href="./analysis.html">分析</a>
+      <a href="./cards.html" class="active" aria-current="page">カード設定</a>
+      <a href="./logs.html">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <div>
+      <h1>カード設定</h1>
+      <p class="lead">登録するカードの基本情報と、支払月の計算に使う締め日を管理します。</p>
+    </div>
+
+    <div class="notice">
+      ログインID・パスワードはこの画面では管理しません。自動取得（現在はVpassのみ対応予定）に必要な認証情報は、実行環境（GitHub Actions）のシークレットとして別途設定します。
+    </div>
+
+    <p id="error-banner" class="error-banner hidden"></p>
+
+    <section class="panel">
+      <div class="panel-title">登録済みのカード</div>
+
+      <div class="row head">
+        <span class="col-active">有効</span>
+        <span class="col-card">カード</span>
+        <span class="col-closing">締め日</span>
+        <span class="col-payment">支払日</span>
+        <span class="col-actions"></span>
+      </div>
+
+      <div id="loading-row" class="row"><span class="muted">読み込み中…</span></div>
+      <div id="empty-row" class="row hidden"><span class="muted">まだカードが登録されていません。下のフォームから追加してください。</span></div>
+      <div id="cards-list"></div>
+
+      <div class="add-row">
+        <div class="add-field" style="width:260px;">
+          <input type="text" id="new-name" class="name-input" placeholder="カード名（例：JCBカード）">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="field-note">下4桁</span>
+            <input type="text" id="new-last4" style="width:80px;" placeholder="0000" maxlength="4" inputmode="numeric">
+          </div>
+        </div>
+        <div class="add-field" style="width:120px;">
+          <select id="new-closing-day">
+            <option value="1">1日</option>
+            <option value="5">5日</option>
+            <option value="10">10日</option>
+            <option value="15" selected>15日</option>
+            <option value="20">20日</option>
+            <option value="25">25日</option>
+            <option value="eom">末日</option>
+          </select>
+        </div>
+        <div class="add-field" style="width:110px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" id="new-payment-day" min="1" max="31" value="27" style="width:60px;">
+            <span class="field-note">日</span>
+          </div>
+        </div>
+        <div class="add-field" style="flex:1;align-items:flex-end;">
+          <button type="button" class="btn btn-primary" id="add-button">カードを追加</button>
+        </div>
+      </div>
+      <p id="add-error" class="error-banner hidden" style="margin:0 24px 16px;"></p>
+    </section>
+
+    <p class="lead">締め日は明細一覧・分析での「支払月」の自動計算に使われます。実際の請求と異なる場合はここで修正してください。カードを削除すると、そのカードの明細もすべて削除されます。</p>
+  </main>
+
+<script>
+  const state = { session: null, cards: [], loading: true, editingId: null, confirmingDeleteId: null };
+
+  const errorBanner = document.getElementById('error-banner');
+  const loadingRow = document.getElementById('loading-row');
+  const emptyRow = document.getElementById('empty-row');
+  const listEl = document.getElementById('cards-list');
+  const addError = document.getElementById('add-error');
+
+  function showError(el, message) {
+    if (!message) { el.classList.add('hidden'); el.textContent = ''; return; }
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  function closingLabel(c) {
+    return c.closes_at_month_end ? '末日' : c.closing_day + '日';
+  }
+
+  function closingOptionsHtml(selectedValue) {
+    const opts = [['1','1日'], ['5','5日'], ['10','10日'], ['15','15日'], ['20','20日'], ['25','25日'], ['eom','末日']];
+    return opts.map(([v, label]) =>
+      `<option value="${v}" ${String(selectedValue) === v ? 'selected' : ''}>${label}</option>`
+    ).join('');
+  }
+
+  async function loadCards() {
+    state.loading = true;
+    render();
+    const { data, error } = await supabaseClient
+      .from('cards')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    state.loading = false;
+    if (error) {
+      showError(errorBanner, '読み込みエラー: ' + error.message);
+      state.cards = [];
+    } else {
+      showError(errorBanner, null);
+      state.cards = data;
+    }
+    render();
+  }
+
+  function render() {
+    loadingRow.classList.toggle('hidden', !state.loading);
+    emptyRow.classList.toggle('hidden', state.loading || state.cards.length > 0);
+
+    listEl.innerHTML = state.cards.map((c) => {
+      const editing = state.editingId === c.id;
+      const confirmingDelete = state.confirmingDeleteId === c.id;
+
+      const switchHtml = `
+        <button type="button" class="switch ${c.is_active ? 'on' : ''}" data-action="toggle-active" data-id="${c.id}" aria-label="${c.name}を${c.is_active ? '無効' : '有効'}にする">
+          <span class="thumb"></span>
+        </button>`;
+
+      let cardCell;
+      if (editing) {
+        cardCell = `
+          <input type="text" class="name-input" data-field="name" data-id="${c.id}" value="${escapeAttr(c.name)}">
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+            <span class="field-note">下4桁</span>
+            <input type="text" data-field="last4" data-id="${c.id}" value="${escapeAttr(c.last4 || '')}" maxlength="4" inputmode="numeric" style="width:80px;">
+          </div>`;
+      } else {
+        cardCell = `
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="dot"></span>
+            <div>
+              <div class="card-name">${escapeHtml(c.name)}</div>
+              <div class="card-sub">下4桁 ${escapeHtml(c.last4 || '未設定')}</div>
+            </div>
+          </div>`;
+      }
+
+      let closingCell;
+      if (editing) {
+        closingCell = `<select data-field="closing_day" data-id="${c.id}">${closingOptionsHtml(c.closes_at_month_end ? 'eom' : c.closing_day)}</select>`;
+      } else {
+        closingCell = `<span>${closingLabel(c)}</span>`;
+      }
+
+      let paymentCell;
+      if (editing) {
+        paymentCell = `<div style="display:flex;align-items:center;gap:6px;"><input type="number" min="1" max="31" data-field="payment_day" data-id="${c.id}" value="${c.payment_day}" style="width:60px;"><span class="field-note">日</span></div>`;
+      } else {
+        paymentCell = `<span>${c.payment_day}日</span>`;
+      }
+
+      let actionsCell;
+      if (confirmingDelete) {
+        actionsCell = `
+          <span class="muted">本当に削除しますか？（明細も全て削除されます）</span>
+          <button type="button" class="btn btn-danger" data-action="delete-confirm" data-id="${c.id}">はい、削除する</button>
+          <button type="button" class="btn" data-action="delete-cancel" data-id="${c.id}">キャンセル</button>`;
+      } else if (editing) {
+        actionsCell = `
+          <button type="button" class="btn btn-danger" data-action="delete-start" data-id="${c.id}">削除</button>
+          <button type="button" class="btn btn-primary" data-action="save" data-id="${c.id}">保存</button>`;
+      } else {
+        actionsCell = `<button type="button" class="btn" data-action="edit" data-id="${c.id}">編集</button>`;
+      }
+
+      return `
+        <div class="row" data-row-id="${c.id}">
+          <span class="col-active">${switchHtml}</span>
+          <span class="col-card">${cardCell}</span>
+          <span class="col-closing">${closingCell}</span>
+          <span class="col-payment">${paymentCell}</span>
+          <span class="col-actions">${actionsCell}</span>
+        </div>`;
+    }).join('');
+
+    bindRowEvents();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  function bindRowEvents() {
+    listEl.querySelectorAll('[data-action="toggle-active"]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleActive(btn.dataset.id));
+    });
+    listEl.querySelectorAll('[data-action="edit"]').forEach((btn) => {
+      btn.addEventListener('click', () => { state.editingId = btn.dataset.id; render(); });
+    });
+    listEl.querySelectorAll('[data-action="save"]').forEach((btn) => {
+      btn.addEventListener('click', () => saveCard(btn.dataset.id));
+    });
+    listEl.querySelectorAll('[data-action="delete-start"]').forEach((btn) => {
+      btn.addEventListener('click', () => { state.confirmingDeleteId = btn.dataset.id; render(); });
+    });
+    listEl.querySelectorAll('[data-action="delete-cancel"]').forEach((btn) => {
+      btn.addEventListener('click', () => { state.confirmingDeleteId = null; render(); });
+    });
+    listEl.querySelectorAll('[data-action="delete-confirm"]').forEach((btn) => {
+      btn.addEventListener('click', () => deleteCard(btn.dataset.id));
+    });
+  }
+
+  async function toggleActive(id) {
+    const c = state.cards.find((x) => x.id === id);
+    if (!c) return;
+    const { error } = await supabaseClient.from('cards').update({ is_active: !c.is_active }).eq('id', id);
+    if (error) { showError(errorBanner, '更新エラー: ' + error.message); return; }
+    await loadCards();
+  }
+
+  async function saveCard(id) {
+    const row = listEl.querySelector(`[data-row-id="${id}"]`);
+    const name = row.querySelector('[data-field="name"]').value.trim();
+    const last4 = row.querySelector('[data-field="last4"]').value.replace(/[^0-9]/g, '').slice(0, 4);
+    const closingRaw = row.querySelector('[data-field="closing_day"]').value;
+    const paymentDay = Number(row.querySelector('[data-field="payment_day"]').value);
+
+    if (!name) { showError(errorBanner, 'カード名を入力してください'); return; }
+
+    const patch = {
+      name,
+      last4: last4 || null,
+      payment_day: paymentDay,
+      closes_at_month_end: closingRaw === 'eom',
+      closing_day: closingRaw === 'eom' ? null : Number(closingRaw)
+    };
+
+    const { error } = await supabaseClient.from('cards').update(patch).eq('id', id);
+    if (error) { showError(errorBanner, '更新エラー: ' + error.message); return; }
+    showError(errorBanner, null);
+    state.editingId = null;
+    await loadCards();
+  }
+
+  async function deleteCard(id) {
+    const { error } = await supabaseClient.from('cards').delete().eq('id', id);
+    if (error) { showError(errorBanner, '削除エラー: ' + error.message); return; }
+    state.confirmingDeleteId = null;
+    await loadCards();
+  }
+
+  function slugify(name) {
+    const ascii = name.replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+    return ascii || 'card' + Date.now();
+  }
+
+  document.getElementById('add-button').addEventListener('click', async () => {
+    const name = document.getElementById('new-name').value.trim();
+    const last4Raw = document.getElementById('new-last4').value.replace(/[^0-9]/g, '').slice(0, 4);
+    const closingRaw = document.getElementById('new-closing-day').value;
+    const paymentDay = Number(document.getElementById('new-payment-day').value) || 27;
+
+    if (!name) { showError(addError, 'カード名を入力してください'); return; }
+    if (last4Raw && !/^[0-9]{4}$/.test(last4Raw)) { showError(addError, '下4桁は数字4桁で入力してください'); return; }
+
+    const payload = {
+      user_id: state.session.user.id,
+      issuer: slugify(name),
+      name,
+      last4: last4Raw || null,
+      payment_day: paymentDay,
+      closes_at_month_end: closingRaw === 'eom',
+      closing_day: closingRaw === 'eom' ? null : Number(closingRaw),
+      sort_order: state.cards.length
+    };
+
+    const { error } = await supabaseClient.from('cards').insert(payload);
+    if (error) { showError(addError, '追加エラー: ' + error.message); return; }
+
+    showError(addError, null);
+    document.getElementById('new-name').value = '';
+    document.getElementById('new-last4').value = '';
+    document.getElementById('new-closing-day').value = '15';
+    document.getElementById('new-payment-day').value = '27';
+    await loadCards();
+  });
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    await loadCards();
+  })();
+</script>
+
+</body>
+</html>

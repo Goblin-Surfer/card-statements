@@ -6,6 +6,7 @@
 <title>カード利用明細</title>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
 <style>
   :root {
     --bg: #F5F2EA;
@@ -143,7 +144,7 @@
     <div class="signed-in hidden" id="signed-in-view">
       <p class="lead">ログイン中</p>
       <span class="email" id="signed-in-email"></span>
-      <p class="lead">画面（明細一覧・分析ダッシュボードなど）は次のフェーズで追加します。</p>
+      <a href="./cards.html" style="display:block;text-align:center;height:48px;line-height:48px;border-radius:12px;background:var(--blue);color:#FFFFFF;font-weight:700;text-decoration:none;">カード設定へ進む</a>
       <button type="button" class="secondary" id="logout-button">ログアウト</button>
     </div>
 
@@ -152,15 +153,9 @@
   </div>
 
 <script>
-  // ------------------------------------------------------------------
-  // Supabase接続設定
-  //   Project URL / Publishable key はどちらも公開して問題ない値です。
-  //   （service_role key と DBパスワードは絶対にここに書かないでください）
-  // ------------------------------------------------------------------
-  const SUPABASE_URL = 'https://mseghmciousmjhcoqgrx.supabase.co';
-  const SUPABASE_ANON_KEY = 'sb_publishable_TB-_jbZDU_KexsSWqTuDBg_wnFWSRGf';
-
-  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // Supabaseの接続設定・クライアント初期化は supabase-client.js に共通化してあります
+  // （このページでは supabaseClient という名前でグローバルに使えます）
+  const client = supabaseClient;
 
   const loginForm = document.getElementById('login-form');
   const emailInput = document.getElementById('email-input');
