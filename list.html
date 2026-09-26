@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>明細一覧 | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  p.lead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+
+  .toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .month-nav { display: flex; align-items: center; gap: 8px; }
+  .month-nav button.icon { width: 40px; height: 40px; border: 1.5px solid var(--border-light); border-radius: 10px; background: #FFFFFF; color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; }
+  .month-label { min-width: 130px; text-align: center; font-size: 15px; font-weight: 700; }
+
+  .tabs { display: flex; gap: 4px; padding: 4px; background: #E7E1D3; border-radius: 12px; flex-wrap: wrap; }
+  .tabs button { min-height: 36px; padding: 0 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; background: transparent; color: var(--text-sub); }
+  .tabs button.active { background: #211F1A; color: #FFFFFF; }
+
+  .count { margin-left: auto; font-size: 13px; color: var(--text-muted); }
+
+  section.panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-top: 1px solid #ECE6D8; flex-wrap: wrap; }
+  .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-size: 12px; font-weight: 700; color: var(--text-muted); }
+  .row.needs-review { background: #FFF8ED; }
+
+  .col-date { width: 64px; flex-shrink: 0; font-size: 13px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+  .col-card { width: 160px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .col-merchant { width: 180px; flex-shrink: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-category { width: 140px; flex-shrink: 0; }
+  .col-amount { width: 100px; flex-shrink: 0; text-align: right; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .col-memo { flex: 1; min-width: 140px; }
+  .col-status { width: 190px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+  select, input[type=text] { height: 32px; box-sizing: border-box; padding: 0 8px; border: 1.5px solid var(--border-light); border-radius: 8px; background: #FFFFFF; font-size: 13px; width: 100%; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .pill-review { background: #FDECC8; color: #8A5A00; }
+  .pill-confirmed { background: #DDEFE3; color: #14513F; }
+
+  button.btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; }
+  button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
+
+  .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .empty { padding: 40px 20px; text-align: center; font-size: 14px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">カード利用明細</span>
+    <nav aria-label="メイン">
+      <a href="./list.html" class="active" aria-current="page">明細一覧</a>
+      <a href="./input.html">手入力</a>
+      <a href="./analysis.html">分析</a>
+      <a href="./cards.html">カード設定</a>
+      <a href="./logs.html">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>明細一覧</h1>
+
+    <p id="error-banner" class="error-banner hidden"></p>
+
+    <div class="toolbar">
+      <div class="month-nav">
+        <button type="button" class="icon" id="prev-month" aria-label="前の支払月">←</button>
+        <span class="month-label" id="month-label"></span>
+        <button type="button" class="icon" id="next-month" aria-label="次の支払月">→</button>
+      </div>
+      <div class="tabs" id="card-tabs"></div>
+      <div class="tabs" id="status-tabs"></div>
+      <span class="count" id="row-count"></span>
+    </div>
+
+    <section class="panel">
+      <div class="row head">
+        <span class="col-date">日付</span>
+        <span class="col-card">カード</span>
+        <span class="col-merchant">利用先</span>
+        <span class="col-category">分類</span>
+        <span class="col-amount">金額</span>
+        <span class="col-memo">メモ</span>
+        <span class="col-status" style="justify-content:flex-start;">状態</span>
+      </div>
+      <div id="loading-row" class="row"><span style="color:var(--text-muted);">読み込み中…</span></div>
+      <div id="rows"></div>
+      <div id="empty" class="empty hidden">この条件に一致する明細はありません。</div>
+    </section>
+
+    <p class="lead">「要確認」は自動取得したばかりの明細です。分類・メモを直して「確定」を押すと、分析の集計対象になります。</p>
+  </main>
+
+<script>
+  const CATS = ['食費', '日用品', '水道光熱', '通信', '交通費', 'その他'];
+  const PALETTE = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#4A3AA7', '#E34948'];
+
+  const today = new Date();
+  const state = {
+    session: null,
+    cards: [],
+    year: today.getFullYear(),
+    month: today.getMonth() + 1, // 1-12
+    cardFilter: 'all',
+    statusFilter: 'all',
+    rows: [],
+    loading: true,
+    editingIds: new Set(),
+    edits: {}
+  };
+
+  const errorBanner = document.getElementById('error-banner');
+  const monthLabel = document.getElementById('month-label');
+  const cardTabsEl = document.getElementById('card-tabs');
+  const statusTabsEl = document.getElementById('status-tabs');
+  const rowCountEl = document.getElementById('row-count');
+  const loadingRow = document.getElementById('loading-row');
+  const rowsEl = document.getElementById('rows');
+  const emptyEl = document.getElementById('empty');
+
+  function showError(message) {
+    if (!message) { errorBanner.classList.add('hidden'); return; }
+    errorBanner.textContent = message;
+    errorBanner.classList.remove('hidden');
+  }
+
+  function isoMonthStart(year, month) {
+    return year + '-' + String(month).padStart(2, '0') + '-01';
+  }
+
+  function cardMeta(cardId) {
+    const idx = state.cards.findIndex((c) => c.id === cardId);
+    const c = state.cards[idx];
+    return {
+      name: c ? c.name : '(削除済みカード)',
+      color: idx >= 0 ? PALETTE[idx % PALETTE.length] : '#8A7F63'
+    };
+  }
+
+  function renderMonthLabel() {
+    monthLabel.textContent = state.year + '年' + state.month + '月支払分';
+  }
+
+  function renderTabs() {
+    const cardOptions = [{ id: 'all', label: 'すべて' }].concat(
+      state.cards.map((c) => ({ id: c.id, label: c.name }))
+    );
+    cardTabsEl.innerHTML = cardOptions.map((o) =>
+      `<button type="button" data-card-filter="${o.id}" class="${state.cardFilter === o.id ? 'active' : ''}">${escapeHtml(o.label)}</button>`
+    ).join('');
+    cardTabsEl.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => { state.cardFilter = btn.dataset.cardFilter; loadRows(); });
+    });
+
+    const statusOptions = [['all', 'すべて'], ['needs_review', '要確認'], ['confirmed', '確定']];
+    statusTabsEl.innerHTML = statusOptions.map(([id, label]) =>
+      `<button type="button" data-status-filter="${id}" class="${state.statusFilter === id ? 'active' : ''}">${label}</button>`
+    ).join('');
+    statusTabsEl.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => { state.statusFilter = btn.dataset.statusFilter; loadRows(); });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function categoryOptionsHtml(selected) {
+    return CATS.map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
+  }
+
+  function renderRows() {
+    loadingRow.classList.toggle('hidden', !state.loading);
+    emptyEl.classList.toggle('hidden', state.loading || state.rows.length > 0);
+    rowCountEl.textContent = state.loading ? '' : state.rows.length + '件';
+
+    rowsEl.innerHTML = state.rows.map((r) => {
+      const meta = cardMeta(r.card_id);
+      const needsReview = r.status === 'needs_review';
+      const editing = needsReview || state.editingIds.has(r.id);
+      const edit = state.edits[r.id] || { category: r.category || '', memo: r.memo || '' };
+
+      const dateLabel = r.used_date.slice(5).replace('-', '/');
+
+      const categoryCell = editing
+        ? `<select data-field="category" data-id="${r.id}">${categoryOptionsHtml(edit.category)}</select>`
+        : `<span>${escapeHtml(r.category || '')}</span>`;
+
+      const memoCell = editing
+        ? `<input type="text" data-field="memo" data-id="${r.id}" value="${escapeHtml(edit.memo)}" placeholder="メモを追加">`
+        : `<span style="font-size:13px;color:var(--text-muted);">${escapeHtml(r.memo || '')}</span>`;
+
+      let actionCell;
+      if (needsReview) {
+        actionCell = `<button type="button" class="btn btn-primary" data-action="confirm" data-id="${r.id}">確定</button>`;
+      } else if (state.editingIds.has(r.id)) {
+        actionCell = `
+          <button type="button" class="btn" data-action="cancel-edit" data-id="${r.id}">キャンセル</button>
+          <button type="button" class="btn btn-primary" data-action="save" data-id="${r.id}">保存</button>`;
+      } else {
+        actionCell = `<button type="button" class="btn" data-action="edit" data-id="${r.id}">編集</button>`;
+      }
+
+      const pillClass = needsReview ? 'pill-review' : 'pill-confirmed';
+      const pillLabel = needsReview ? '要確認' : '確定';
+      const pillDot = needsReview ? '#FAB219' : '#0CA30C';
+
+      return `
+        <div class="row ${needsReview ? 'needs-review' : ''}" data-row-id="${r.id}">
+          <span class="col-date">${dateLabel}</span>
+          <span class="col-card"><span class="dot" style="background:${meta.color};"></span>${escapeHtml(meta.name)}</span>
+          <span class="col-merchant">${escapeHtml(r.merchant)}</span>
+          <span class="col-category">${categoryCell}</span>
+          <span class="col-amount">${Number(r.amount).toLocaleString('ja-JP')}円</span>
+          <span class="col-memo">${memoCell}</span>
+          <span class="col-status">
+            <span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${pillLabel}</span>
+            ${actionCell}
+          </span>
+        </div>`;
+    }).join('');
+
+    bindRowEvents();
+  }
+
+  function bindRowEvents() {
+    rowsEl.querySelectorAll('[data-field]').forEach((input) => {
+      input.addEventListener('input', () => {
+        const id = input.dataset.id;
+        const field = input.dataset.field;
+        const row = state.rows.find((r) => r.id === id);
+        const current = state.edits[id] || { category: row.category || '', memo: row.memo || '' };
+        current[field] = input.value;
+        state.edits[id] = current;
+      });
+    });
+    rowsEl.querySelectorAll('[data-action="confirm"]').forEach((btn) => {
+      btn.addEventListener('click', () => confirmRow(btn.dataset.id));
+    });
+    rowsEl.querySelectorAll('[data-action="edit"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const row = state.rows.find((r) => r.id === id);
+        state.edits[id] = { category: row.category || '', memo: row.memo || '' };
+        state.editingIds.add(id);
+        renderRows();
+      });
+    });
+    rowsEl.querySelectorAll('[data-action="cancel-edit"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.editingIds.delete(btn.dataset.id);
+        delete state.edits[btn.dataset.id];
+        renderRows();
+      });
+    });
+    rowsEl.querySelectorAll('[data-action="save"]').forEach((btn) => {
+      btn.addEventListener('click', () => saveRow(btn.dataset.id, false));
+    });
+  }
+
+  async function confirmRow(id) {
+    await saveRow(id, true);
+  }
+
+  async function saveRow(id, confirm) {
+    const edit = state.edits[id] || {};
+    const patch = { category: edit.category || null, memo: edit.memo || null };
+    if (confirm) patch.status = 'confirmed';
+
+    const { error } = await supabaseClient.from('card_statements').update(patch).eq('id', id);
+    if (error) { showError('更新エラー: ' + error.message); return; }
+
+    showError(null);
+    state.editingIds.delete(id);
+    delete state.edits[id];
+    await loadRows();
+  }
+
+  async function loadCards() {
+    const { data, error } = await supabaseClient.from('cards').select('*').order('sort_order', { ascending: true });
+    if (error) { showError('カード読み込みエラー: ' + error.message); return; }
+    state.cards = data;
+  }
+
+  async function loadRows() {
+    state.loading = true;
+    renderTabs();
+    renderMonthLabel();
+    renderRows();
+
+    let query = supabaseClient
+      .from('card_statements')
+      .select('*')
+      .eq('billing_month', isoMonthStart(state.year, state.month))
+      .order('used_date', { ascending: true });
+
+    if (state.cardFilter !== 'all') query = query.eq('card_id', state.cardFilter);
+    if (state.statusFilter !== 'all') query = query.eq('status', state.statusFilter);
+
+    const { data, error } = await query;
+    state.loading = false;
+
+    if (error) {
+      showError('明細の読み込みエラー: ' + error.message);
+      state.rows = [];
+    } else {
+      showError(null);
+      state.rows = data;
+    }
+    renderRows();
+  }
+
+  document.getElementById('prev-month').addEventListener('click', () => {
+    state.month -= 1;
+    if (state.month < 1) { state.month = 12; state.year -= 1; }
+    loadRows();
+  });
+  document.getElementById('next-month').addEventListener('click', () => {
+    state.month += 1;
+    if (state.month > 12) { state.month = 1; state.year += 1; }
+    loadRows();
+  });
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    await loadCards();
+    await loadRows();
+  })();
+</script>
+
+</body>
+</html>
