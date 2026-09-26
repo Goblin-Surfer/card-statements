@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分析 | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+    --good: #006300; --bad: #D03B3B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 20px; }
+
+  .top-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .title-nav { display: flex; align-items: center; gap: 8px; }
+  h1 { margin: 0 16px 0 0; font-size: 22px; font-weight: 700; }
+  .icon-btn { width: 44px; height: 44px; border: 1.5px solid var(--border-light); border-radius: 12px; background: #FFFFFF; color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; }
+  .month-label { min-width: 150px; text-align: center; font-size: 18px; font-weight: 700; }
+
+  section.panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+
+  .hero { display: flex; align-items: center; gap: 32px; flex-wrap: wrap; }
+  .hero-main { display: flex; flex-direction: column; gap: 4px; }
+  .hero-main .label { font-size: 14px; font-weight: 700; color: var(--text-sub); }
+  .hero-main .value-row { display: flex; align-items: baseline; gap: 6px; }
+  .hero-main .value { font-size: 44px; font-weight: 700; line-height: 1.1; }
+  .hero-main .unit { font-size: 16px; font-weight: 500; color: var(--text-sub); }
+  .hero-main .delta { font-size: 13px; font-weight: 500; }
+  .hero-divider { width: 1px; align-self: stretch; background: #ECE6D8; }
+  .hero-cards { flex-grow: 1; display: flex; gap: 12px; flex-wrap: wrap; }
+  .hero-card { flex: 1; min-width: 140px; box-sizing: border-box; padding: 12px 16px; background: var(--bg); border-radius: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .hero-card .name { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text-sub); }
+  .hero-card .amount { font-size: 20px; font-weight: 700; }
+  .hero-card .payday { font-size: 12px; color: var(--text-muted); }
+
+  .cols { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+  .col-left { flex: 1.2; min-width: 380px; display: flex; flex-direction: column; gap: 20px; }
+  .col-right { flex: 1; min-width: 320px; display: flex; flex-direction: column; gap: 20px; }
+
+  .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .panel-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
+  .panel-head .sub { font-size: 12px; color: var(--text-muted); }
+  .toggle-btn { min-height: 36px; padding: 0 14px; border: 1.5px solid var(--border-light); border-radius: 18px; background: #FFFFFF; color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+
+  .legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-sub); }
+  .sq { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  .chart-wrap { position: relative; height: 160px; margin-left: 48px; }
+  .chart-ticks div { position: absolute; left: 0; right: 0; border-top: 1px solid #E6E0D3; height: 0; }
+  .chart-ticks div.zero { border-top-color: #C9C2B2; }
+  .chart-ticks span { position: absolute; left: -48px; width: 42px; text-align: right; top: -7px; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .chart-labels { display: flex; margin-left: 48px; }
+  .chart-labels span { flex: 1; text-align: center; font-size: 12px; color: var(--text-muted); }
+  .chart-labels span.active { font-weight: 700; color: var(--text); }
+  .readout { margin: 0; min-height: 20px; font-size: 13px; color: var(--text-sub); }
+  .readout strong { font-size: 15px; color: var(--text); }
+
+  .bar-groups { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; align-items: flex-end; }
+  .bar-group { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 3px; border: none; background: transparent; cursor: pointer; padding: 0; position: relative; }
+  .bar-group.active { background: #F0EADB; }
+  .bar { display: block; width: 16px; border-radius: 4px 4px 0 0; }
+
+  table.month-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.month-table th, table.month-table td { text-align: left; padding: 8px 0; border-bottom: 1px solid #ECE6D8; font-variant-numeric: tabular-nums; }
+  table.month-table th { font-size: 12px; color: var(--text-muted); border-bottom: 1px solid #C9C2B2; }
+  table.month-table td.num { text-align: right; font-weight: 700; }
+
+  .merchant-row { display: flex; align-items: center; gap: 12px; min-height: 40px; border-top: 1px solid #ECE6D8; }
+  .merchant-row:first-child { border-top: none; }
+  .merchant-name { width: 110px; flex-shrink: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .merchant-bar-wrap { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .merchant-bar { display: block; height: 14px; background: var(--blue); border-radius: 0 4px 4px 0; }
+  .merchant-value { font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .merchant-share { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+
+  .notice { box-sizing: border-box; padding: 14px 16px; background: #EAF1FB; border: 1px solid #CBDFF5; border-radius: 10px; font-size: 13px; line-height: 1.6; color: #1F4E8C; }
+  .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .empty { padding: 24px 4px; text-align: center; font-size: 13px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+  .muted { color: var(--text-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">カード利用明細</span>
+    <nav aria-label="メイン">
+      <a href="./list.html">明細一覧</a>
+      <a href="./input.html">手入力</a>
+      <a href="./analysis.html" class="active" aria-current="page">分析</a>
+      <a href="./cards.html">カード設定</a>
+      <a href="./logs.html">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <p id="error-banner" class="error-banner hidden"></p>
+
+    <div class="top-row">
+      <div class="title-nav">
+        <h1>分析</h1>
+        <button type="button" class="icon-btn" id="prev-month" aria-label="前の支払月">←</button>
+        <span class="month-label" id="month-label"></span>
+        <button type="button" class="icon-btn" id="next-month" aria-label="次の支払月">→</button>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div id="hero-loading" class="muted">読み込み中…</div>
+      <div id="hero" class="hero hidden">
+        <div class="hero-main">
+          <span class="label" id="hero-label"></span>
+          <div class="value-row">
+            <span class="value" id="hero-total">0</span>
+            <span class="unit">円</span>
+          </div>
+          <span class="delta" id="hero-delta"></span>
+        </div>
+        <div class="hero-divider"></div>
+        <div class="hero-cards" id="hero-cards"></div>
+      </div>
+    </section>
+
+    <div class="cols">
+      <div class="col-left">
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>全カード合計の推移</h2>
+              <div class="sub">直近6か月・支払月をクリックで切り替え</div>
+            </div>
+            <button type="button" class="toggle-btn" id="trend-toggle">表で見る</button>
+          </div>
+          <div id="trend-chart-view">
+            <p class="readout" id="trend-readout"></p>
+            <div class="chart-wrap">
+              <div class="chart-ticks" id="trend-ticks"></div>
+              <svg id="trend-svg" width="100%" height="160" viewBox="0 0 600 160" preserveAspectRatio="none" style="position:absolute;left:0;top:0;overflow:visible;">
+                <polyline id="trend-line" fill="none" stroke="#2A78D6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>
+              </svg>
+              <div class="bar-groups" id="trend-groups"></div>
+            </div>
+            <div class="chart-labels" id="trend-labels"></div>
+          </div>
+          <div id="trend-table-view" class="hidden">
+            <table class="month-table">
+              <thead><tr><th>支払月</th><th style="text-align:right;">合計</th></tr></thead>
+              <tbody id="trend-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>カードごと・月ごとの合計金額</h2>
+              <div class="sub">直近6か月</div>
+            </div>
+            <div class="legend" id="bycard-legend"></div>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-ticks" id="bycard-ticks"></div>
+            <div class="bar-groups" id="bycard-groups" style="position:absolute;left:0;right:0;top:0;bottom:0;"></div>
+          </div>
+          <div class="chart-labels" id="bycard-labels"></div>
+        </section>
+
+      </div>
+
+      <div class="col-right">
+
+        <section class="panel">
+          <h2>利用先ごとの集計</h2>
+          <div class="sub" id="merchant-sub"></div>
+          <div id="merchant-rows"></div>
+          <div id="merchant-empty" class="empty hidden">この月の確定済み明細がありません。</div>
+        </section>
+
+        <section class="panel">
+          <h2>自動取得の状況</h2>
+          <div class="notice">Vpassの自動取得はまだ設定されていません（Phase 6で追加予定です）。それまでは「手入力」から登録してください。</div>
+        </section>
+
+      </div>
+    </div>
+
+    <p class="muted">集計対象は「確定」済みの明細のみです。「要確認」のままの明細は、明細一覧で確定するとここに反映されます。</p>
+  </main>
+
+<script>
+  const PALETTE = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#4A3AA7', '#E34948'];
+
+  const today = new Date();
+  const state = {
+    session: null,
+    cards: [],
+    year: today.getFullYear(),
+    month: today.getMonth() + 1,
+    monthsData: [], // [{year, month, total, byCard:{cardId:sum}, merchants:{name:sum}}]
+    tableView: false,
+    loading: true
+  };
+
+  const errorBanner = document.getElementById('error-banner');
+
+  function showError(msg) {
+    if (!msg) { errorBanner.classList.add('hidden'); return; }
+    errorBanner.textContent = msg;
+    errorBanner.classList.remove('hidden');
+  }
+
+  function fmt(n) { return Math.round(n).toLocaleString('ja-JP'); }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+  function cardColor(idx) { return PALETTE[idx % PALETTE.length]; }
+  function isoMonthStart(y, m) { return y + '-' + String(m).padStart(2, '0') + '-01'; }
+
+  function windowMonths(endYear, endMonth) {
+    const arr = [];
+    let y = endYear, m = endMonth;
+    for (let i = 0; i < 6; i++) {
+      arr.unshift({ year: y, month: m });
+      m -= 1;
+      if (m < 1) { m = 12; y -= 1; }
+    }
+    return arr;
+  }
+
+  async function loadCards() {
+    const { data, error } = await supabaseClient.from('cards').select('*').order('sort_order', { ascending: true });
+    if (error) { showError('カード読み込みエラー: ' + error.message); return; }
+    state.cards = data;
+  }
+
+  async function loadWindowData() {
+    state.loading = true;
+    renderAll();
+
+    const months = windowMonths(state.year, state.month);
+    const startIso = isoMonthStart(months[0].year, months[0].month);
+    const endIso = isoMonthStart(months[5].year, months[5].month);
+
+    const { data, error } = await supabaseClient
+      .from('card_statements')
+      .select('billing_month, card_id, amount, merchant')
+      .eq('status', 'confirmed')
+      .gte('billing_month', startIso)
+      .lte('billing_month', endIso);
+
+    state.loading = false;
+
+    if (error) {
+      showError('集計データの読み込みエラー: ' + error.message);
+      state.monthsData = months.map((m) => ({ ...m, total: 0, byCard: {}, merchants: {} }));
+      renderAll();
+      return;
+    }
+    showError(null);
+
+    state.monthsData = months.map((m) => {
+      const key = isoMonthStart(m.year, m.month);
+      const rowsInMonth = data.filter((r) => r.billing_month === key);
+      const byCard = {};
+      const merchants = {};
+      let total = 0;
+      rowsInMonth.forEach((r) => {
+        byCard[r.card_id] = (byCard[r.card_id] || 0) + Number(r.amount);
+        merchants[r.merchant] = (merchants[r.merchant] || 0) + Number(r.amount);
+        total += Number(r.amount);
+      });
+      return { ...m, total, byCard, merchants };
+    });
+
+    renderAll();
+  }
+
+  function renderAll() {
+    document.getElementById('month-label').textContent = state.year + '年' + state.month + '月支払分';
+
+    if (state.loading) {
+      document.getElementById('hero-loading').classList.remove('hidden');
+      document.getElementById('hero').classList.add('hidden');
+      return;
+    }
+    document.getElementById('hero-loading').classList.add('hidden');
+    document.getElementById('hero').classList.remove('hidden');
+
+    renderHero();
+    renderTrend();
+    renderByCard();
+    renderMerchants();
+  }
+
+  function currentMonthData() {
+    return state.monthsData[state.monthsData.length - 1];
+  }
+  function prevMonthData() {
+    return state.monthsData.length > 1 ? state.monthsData[state.monthsData.length - 2] : null;
+  }
+
+  function renderHero() {
+    const cur = currentMonthData();
+    const prev = prevMonthData();
+    if (!cur) return;
+
+    document.getElementById('hero-label').textContent = state.year + '年' + state.month + '月支払分の合計（全カード）';
+    document.getElementById('hero-total').textContent = fmt(cur.total);
+
+    const deltaEl = document.getElementById('hero-delta');
+    if (prev) {
+      const diff = cur.total - prev.total;
+      if (diff === 0) {
+        deltaEl.textContent = '前月と同額';
+        deltaEl.style.color = 'var(--text-muted)';
+      } else {
+        const up = diff > 0;
+        deltaEl.textContent = (up ? '▲ ' : '▼ ') + '前月より ' + fmt(Math.abs(diff)) + '円 ' + (up ? '増' : '減');
+        deltaEl.style.color = up ? 'var(--bad)' : 'var(--good)';
+      }
+    } else {
+      deltaEl.textContent = '前月データなし';
+      deltaEl.style.color = 'var(--text-muted)';
+    }
+
+    document.getElementById('hero-cards').innerHTML = state.cards.map((c, idx) => {
+      const amount = cur.byCard[c.id] || 0;
+      return `
+        <div class="hero-card">
+          <span class="name"><span class="sq" style="background:${cardColor(idx)};"></span>${escapeHtml(c.name)}</span>
+          <span class="amount">${fmt(amount)}<span style="margin-left:4px;font-size:12px;font-weight:500;color:var(--text-sub);">円</span></span>
+          <span class="payday">引落日 ${c.payment_day}日</span>
+        </div>`;
+    }).join('') || '<span class="muted">カードが登録されていません。</span>';
+  }
+
+  function renderTrend() {
+    const maxAll = Math.max(1, ...state.monthsData.map((m) => m.total));
+    const ticks = [0, Math.round(maxAll / 2), maxAll];
+    document.getElementById('trend-ticks').innerHTML = ticks.map((v) => {
+      const bottom = Math.round((v / maxAll) * 160);
+      return `<div class="${v === 0 ? 'zero' : ''}" style="bottom:${bottom}px;"><span>${v === 0 ? '0' : fmt(v / 1000) + 'k'}</span></div>`;
+    }).join('');
+
+    const step = 600 / (state.monthsData.length - 1 || 1);
+    const points = state.monthsData.map((m, i) => {
+      const x = Math.round(i * step);
+      const y = 160 - Math.round((m.total / maxAll) * 160);
+      return x + ',' + y;
+    }).join(' ');
+    document.getElementById('trend-line').setAttribute('points', points);
+
+    document.getElementById('trend-groups').innerHTML = state.monthsData.map((m, i) => {
+      const dotBottom = Math.round((m.total / maxAll) * 160);
+      const isActive = i === state.monthsData.length - 1;
+      return `
+        <button type="button" class="bar-group ${isActive ? 'active' : ''}" data-month-index="${i}" aria-label="${m.month}月支払 合計${fmt(m.total)}円">
+          <span class="dot" style="position:absolute;left:50%;bottom:${dotBottom}px;transform:translate(-50%,50%);background:#2A78D6;border:2px solid #FFFFFF;"></span>
+        </button>`;
+    }).join('');
+    document.querySelectorAll('#trend-groups [data-month-index]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const m = state.monthsData[Number(btn.dataset.monthIndex)];
+        state.year = m.year; state.month = m.month;
+        loadWindowData();
+      });
+    });
+
+    document.getElementById('trend-labels').innerHTML = state.monthsData.map((m, i) =>
+      `<span class="${i === state.monthsData.length - 1 ? 'active' : ''}">${m.month}月</span>`
+    ).join('');
+
+    const cur = currentMonthData();
+    document.getElementById('trend-readout').innerHTML = cur
+      ? `<span style="font-weight:700;color:var(--text);">${cur.year}年${cur.month}月支払分</span> 合計 <strong>${fmt(cur.total)}円</strong>`
+      : '';
+
+    document.getElementById('trend-table-body').innerHTML = state.monthsData.map((m, i) =>
+      `<tr><td style="${i === state.monthsData.length - 1 ? 'font-weight:700;' : ''}">${m.month}月</td><td class="num">${fmt(m.total)}</td></tr>`
+    ).join('');
+  }
+
+  document.getElementById('trend-toggle').addEventListener('click', () => {
+    state.tableView = !state.tableView;
+    document.getElementById('trend-toggle').textContent = state.tableView ? 'グラフで見る' : '表で見る';
+    document.getElementById('trend-chart-view').classList.toggle('hidden', state.tableView);
+    document.getElementById('trend-table-view').classList.toggle('hidden', !state.tableView);
+  });
+
+  function renderByCard() {
+    document.getElementById('bycard-legend').innerHTML = state.cards.map((c, idx) =>
+      `<span><span class="sq" style="background:${cardColor(idx)};"></span>${escapeHtml(c.name)}</span>`
+    ).join('');
+
+    const barMax = Math.max(1, ...state.monthsData.map((m) =>
+      Math.max(0, ...state.cards.map((c) => m.byCard[c.id] || 0))
+    ));
+    const ticks = [0, Math.round(barMax / 2), barMax];
+    document.getElementById('bycard-ticks').innerHTML = ticks.map((v) => {
+      const bottom = Math.round((v / barMax) * 160);
+      return `<div class="${v === 0 ? 'zero' : ''}" style="bottom:${bottom}px;"><span>${v === 0 ? '0' : fmt(v / 1000) + 'k'}</span></div>`;
+    }).join('');
+
+    document.getElementById('bycard-groups').innerHTML = state.monthsData.map((m, i) => {
+      const isActive = i === state.monthsData.length - 1;
+      const bars = state.cards.map((c, idx) => {
+        const v = m.byCard[c.id] || 0;
+        const h = Math.round((v / barMax) * 160);
+        return `<span class="bar" style="background:${cardColor(idx)};height:${h}px;"></span>`;
+      }).join('');
+      return `<div class="bar-group ${isActive ? 'active' : ''}">${bars}</div>`;
+    }).join('');
+
+    document.getElementById('bycard-labels').innerHTML = state.monthsData.map((m, i) =>
+      `<span class="${i === state.monthsData.length - 1 ? 'active' : ''}">${m.month}月</span>`
+    ).join('');
+  }
+
+  function renderMerchants() {
+    const cur = currentMonthData();
+    document.getElementById('merchant-sub').textContent = state.year + '年' + state.month + '月支払分・金額の大きい順';
+    if (!cur) return;
+
+    const entries = Object.entries(cur.merchants).sort((a, b) => b[1] - a[1]);
+    document.getElementById('merchant-empty').classList.toggle('hidden', entries.length > 0);
+
+    const max = entries.length ? entries[0][1] : 1;
+    document.getElementById('merchant-rows').innerHTML = entries.map(([name, v]) => {
+      const widthPct = (v / max * 70).toFixed(1);
+      const share = cur.total > 0 ? Math.round((v / cur.total) * 100) : 0;
+      return `
+        <div class="merchant-row">
+          <span class="merchant-name">${escapeHtml(name)}</span>
+          <div class="merchant-bar-wrap">
+            <span class="merchant-bar" style="width:${widthPct}%;"></span>
+            <span class="merchant-value">${fmt(v)}円<span class="merchant-share">${share}%</span></span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  document.getElementById('prev-month').addEventListener('click', () => {
+    state.month -= 1;
+    if (state.month < 1) { state.month = 12; state.year -= 1; }
+    loadWindowData();
+  });
+  document.getElementById('next-month').addEventListener('click', () => {
+    state.month += 1;
+    if (state.month > 12) { state.month = 1; state.year += 1; }
+    loadWindowData();
+  });
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    await loadCards();
+    await loadWindowData();
+  })();
+</script>
+
+</body>
+</html>
