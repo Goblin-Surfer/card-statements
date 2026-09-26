@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #F5F2EA;
+    --card: #FFFFFF;
+    --border: #DDD6C8;
+    --border-light: #D9D2C3;
+    --text: #211F1A;
+    --text-sub: #4A463D;
+    --text-muted: #6B665A;
+    --blue: #2A78D6;
+    --error-bg: #FBE1DD;
+    --error-text: #8C2E22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  }
+  .card {
+    width: 100%;
+    max-width: 400px;
+    margin: 24px;
+    box-sizing: border-box;
+    padding: 32px 28px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+  p.lead {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-sub);
+  }
+  input[type=email] {
+    height: 44px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1.5px solid var(--border-light);
+    border-radius: 10px;
+    background: #FFFFFF;
+    font-size: 14px;
+    color: var(--text);
+    font-family: inherit;
+  }
+  button {
+    height: 48px;
+    border: none;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    background: var(--blue);
+    color: #FFFFFF;
+  }
+  button:disabled {
+    background: #E7E1D3;
+    color: #9A937F;
+    cursor: default;
+  }
+  button.secondary {
+    background: #FFFFFF;
+    color: var(--text-sub);
+    border: 1px solid var(--border-light);
+  }
+  .status {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .status.error {
+    padding: 10px 12px;
+    background: var(--error-bg);
+    color: var(--error-text);
+    border-radius: 8px;
+  }
+  .status.ok {
+    padding: 10px 12px;
+    background: #DDEFE3;
+    color: #14513F;
+    border-radius: 8px;
+  }
+  .signed-in {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .signed-in .email {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+  <div class="card" id="app">
+    <h1>カード利用明細</h1>
+
+    <!-- ログインフォーム -->
+    <form id="login-form">
+      <p class="lead">登録済みのメールアドレスにログイン用のリンクを送ります。</p>
+      <label>
+        メールアドレス
+        <input type="email" id="email-input" placeholder="you@example.com" required autocomplete="email">
+      </label>
+      <button type="submit" id="login-button">ログインリンクを送る</button>
+      <p class="status hidden" id="login-status"></p>
+    </form>
+
+    <!-- ログイン済み -->
+    <div class="signed-in hidden" id="signed-in-view">
+      <p class="lead">ログイン中</p>
+      <span class="email" id="signed-in-email"></span>
+      <p class="lead">画面（明細一覧・分析ダッシュボードなど）は次のフェーズで追加します。</p>
+      <button type="button" class="secondary" id="logout-button">ログアウト</button>
+    </div>
+
+    <!-- 認証コールバック処理中 -->
+    <p class="status hidden" id="callback-status">ログイン処理中です…</p>
+  </div>
+
+<script>
+  // ------------------------------------------------------------------
+  // Supabase接続設定
+  //   Project URL / Publishable key はどちらも公開して問題ない値です。
+  //   （service_role key と DBパスワードは絶対にここに書かないでください）
+  // ------------------------------------------------------------------
+  const SUPABASE_URL = 'https://mseghmciousmjhcoqgrx.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_TB-_jbZDU_KexsSWqTuDBg_wnFWSRGf';
+
+  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const loginForm = document.getElementById('login-form');
+  const emailInput = document.getElementById('email-input');
+  const loginButton = document.getElementById('login-button');
+  const loginStatus = document.getElementById('login-status');
+  const signedInView = document.getElementById('signed-in-view');
+  const signedInEmail = document.getElementById('signed-in-email');
+  const logoutButton = document.getElementById('logout-button');
+  const callbackStatus = document.getElementById('callback-status');
+
+  function setStatus(el, message, kind) {
+    el.textContent = message;
+    el.classList.remove('hidden', 'ok', 'error');
+    if (kind) el.classList.add(kind);
+  }
+
+  function render(session) {
+    callbackStatus.classList.add('hidden');
+    if (session) {
+      loginForm.classList.add('hidden');
+      signedInView.classList.remove('hidden');
+      signedInEmail.textContent = session.user.email;
+    } else {
+      signedInView.classList.add('hidden');
+      loginForm.classList.remove('hidden');
+    }
+  }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = emailInput.value.trim();
+    if (!email) return;
+
+    loginButton.disabled = true;
+    setStatus(loginStatus, '送信中…');
+
+    const { error } = await client.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname }
+    });
+
+    loginButton.disabled = false;
+
+    if (error) {
+      setStatus(loginStatus, 'エラー: ' + error.message, 'error');
+    } else {
+      setStatus(loginStatus, email + ' 宛にログイン用のリンクを送信しました。メールを確認してください。', 'ok');
+    }
+  });
+
+  logoutButton.addEventListener('click', async () => {
+    await client.auth.signOut();
+  });
+
+  client.auth.onAuthStateChange((_event, session) => {
+    render(session);
+  });
+
+  // 初期表示（マジックリンクからの戻りも含めて、まずセッションの有無を確認）
+  (async () => {
+    const isCallback = window.location.hash.includes('access_token') || window.location.search.includes('code=');
+    if (isCallback) {
+      loginForm.classList.add('hidden');
+      callbackStatus.classList.remove('hidden');
+    }
+    const { data: { session } } = await client.auth.getSession();
+    render(session);
+  })();
+</script>
+
+</body>
+</html>
