@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手入力 | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  p.lead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+
+  .layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+
+  section.panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .form-panel { width: 420px; flex-shrink: 0; }
+  .recent-panel { flex: 1; min-width: 320px; }
+
+  h2 { margin: 0; font-size: 16px; font-weight: 700; }
+
+  label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text-sub); }
+  .field-row { display: flex; gap: 16px; }
+  .field-row > label.field { flex: 1; }
+
+  select, input[type=text], input[type=date], input[type=number] {
+    height: 44px; box-sizing: border-box; padding: 0 12px; border: 1.5px solid var(--border-light);
+    border-radius: 10px; background: #FFFFFF; font-size: 14px; color: var(--text); width: 100%;
+  }
+  .select-wrap { position: relative; }
+  .select-wrap .dot { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 10px; height: 10px; border-radius: 50%; pointer-events: none; }
+  .select-wrap select { padding-left: 32px; font-weight: 700; }
+
+  .amount-wrap { position: relative; }
+  .amount-wrap input { padding-right: 36px; }
+  .amount-wrap span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--text-muted); }
+
+  .preview-box { box-sizing: border-box; padding: 14px 16px; background: var(--bg); border-radius: 10px; display: flex; flex-direction: column; gap: 2px; }
+  .preview-box .value { font-size: 15px; font-weight: 700; }
+
+  button.save { height: 48px; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; background: var(--blue); color: #FFFFFF; }
+  button.save:disabled { background: #E7E1D3; color: #9A937F; cursor: default; }
+
+  .status-msg { margin: 0; font-size: 13px; line-height: 1.6; padding: 10px 12px; border-radius: 8px; }
+  .status-msg.ok { background: #DDEFE3; color: #14513F; }
+  .status-msg.error { background: var(--error-bg); color: var(--error-text); }
+
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-top: 1px solid #ECE6D8; flex-wrap: wrap; font-size: 13px; }
+  .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-weight: 700; color: var(--text-muted); font-size: 12px; }
+  .col-date { width: 56px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .col-card { width: 140px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+  .col-merchant { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-category { width: 90px; flex-shrink: 0; }
+  .col-amount { width: 90px; flex-shrink: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .col-billing { width: 110px; flex-shrink: 0; text-align: right; color: var(--text-muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+  .empty { padding: 30px 4px; text-align: center; color: var(--text-muted); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">カード利用明細</span>
+    <nav aria-label="メイン">
+      <a href="./list.html">明細一覧</a>
+      <a href="./input.html" class="active" aria-current="page">手入力</a>
+      <a href="./analysis.html">分析</a>
+      <a href="./cards.html">カード設定</a>
+      <a href="./logs.html">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <div>
+      <h1>手入力</h1>
+      <p class="lead">自動取得できない明細や、修正・追加したい明細をここから登録します。</p>
+    </div>
+
+    <div class="layout">
+      <section class="panel form-panel">
+        <h2>明細を追加</h2>
+
+        <label class="field">
+          カード
+          <div class="select-wrap">
+            <span class="dot" id="card-dot"></span>
+            <select id="f-card"></select>
+          </div>
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            利用日
+            <input type="date" id="f-date">
+          </label>
+          <label class="field">
+            金額
+            <div class="amount-wrap">
+              <input type="number" id="f-amount" min="0" placeholder="0">
+              <span>円</span>
+            </div>
+          </label>
+        </div>
+
+        <label class="field">
+          利用先
+          <input type="text" id="f-merchant" placeholder="例：スーパー丸井">
+        </label>
+
+        <div class="field-row">
+          <label class="field">
+            分類
+            <select id="f-category"></select>
+          </label>
+          <label class="field">
+            メモ（任意）
+            <input type="text" id="f-memo" placeholder="メモを追加">
+          </label>
+        </div>
+
+        <div class="preview-box">
+          <span style="font-size:13px;font-weight:700;color:var(--text-sub);">支払月（自動計算）</span>
+          <span class="value" id="preview-billing">カードと利用日を選択すると自動計算されます</span>
+          <span style="font-size:12px;color:var(--text-muted);">カードの締め日をもとに計算しています。実際と異なる場合は明細一覧から修正してください。</span>
+        </div>
+
+        <button type="button" class="save" id="save-button" disabled>保存する</button>
+        <p id="save-status" class="status-msg hidden"></p>
+        <p class="lead">手入力した明細はすぐに「確定」扱いになり、分析の集計にそのまま反映されます。</p>
+      </section>
+
+      <section class="panel recent-panel">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;">
+          <h2>最近手入力した明細</h2>
+          <span id="recent-count" style="font-size:12px;color:var(--text-muted);"></span>
+        </div>
+        <div class="row head">
+          <span class="col-date">日付</span>
+          <span class="col-card">カード</span>
+          <span class="col-merchant">利用先</span>
+          <span class="col-category">分類</span>
+          <span class="col-amount">金額</span>
+          <span class="col-billing">支払月</span>
+        </div>
+        <div id="recent-rows"></div>
+        <div id="recent-empty" class="empty hidden">手入力した明細はまだありません。保存すると、ここに表示されます。</div>
+      </section>
+    </div>
+  </main>
+
+<script>
+  const CATS = ['食費', '日用品', '水道光熱', '通信', '交通費', 'その他'];
+  const PALETTE = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#4A3AA7', '#E34948'];
+
+  const state = { session: null, cards: [], recent: [] };
+
+  const cardSelect = document.getElementById('f-card');
+  const cardDot = document.getElementById('card-dot');
+  const dateInput = document.getElementById('f-date');
+  const amountInput = document.getElementById('f-amount');
+  const merchantInput = document.getElementById('f-merchant');
+  const categorySelect = document.getElementById('f-category');
+  const memoInput = document.getElementById('f-memo');
+  const previewBilling = document.getElementById('preview-billing');
+  const saveButton = document.getElementById('save-button');
+  const saveStatus = document.getElementById('save-status');
+  const recentRowsEl = document.getElementById('recent-rows');
+  const recentEmptyEl = document.getElementById('recent-empty');
+  const recentCountEl = document.getElementById('recent-count');
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function cardColor(cardId) {
+    const idx = state.cards.findIndex((c) => c.id === cardId);
+    return idx >= 0 ? PALETTE[idx % PALETTE.length] : '#8A7F63';
+  }
+
+  function selectedCard() {
+    return state.cards.find((c) => c.id === cardSelect.value);
+  }
+
+  function billingMonthLabel(card, dateStr) {
+    if (!card || !dateStr) return null;
+    const d = new Date(dateStr + 'T00:00:00');
+    if (isNaN(d.getTime())) return null;
+    let y = d.getFullYear();
+    let m = d.getMonth() + 1;
+    const lag = card.closes_at_month_end ? 1 : (d.getDate() <= card.closing_day ? 1 : 2);
+    m += lag;
+    while (m > 12) { m -= 12; y += 1; }
+    return y + '年' + m + '月支払';
+  }
+
+  function updatePreview() {
+    const card = selectedCard();
+    cardDot.style.background = card ? cardColor(card.id) : '#8A7F63';
+    const label = billingMonthLabel(card, dateInput.value);
+    previewBilling.textContent = label || 'カードと利用日を選択すると自動計算されます';
+    updateSaveEnabled();
+  }
+
+  function updateSaveEnabled() {
+    const ok = cardSelect.value && dateInput.value && Number(amountInput.value) > 0 && merchantInput.value.trim() !== '';
+    saveButton.disabled = !ok;
+  }
+
+  function renderCardOptions() {
+    cardSelect.innerHTML = state.cards.map((c) =>
+      `<option value="${c.id}">${escapeHtml(c.name)}</option>`
+    ).join('');
+    updatePreview();
+  }
+
+  function renderCategoryOptions() {
+    categorySelect.innerHTML = CATS.map((c) => `<option value="${c}">${c}</option>`).join('');
+  }
+
+  function renderRecent() {
+    recentEmptyEl.classList.toggle('hidden', state.recent.length > 0);
+    recentCountEl.textContent = state.recent.length + '件';
+    recentRowsEl.innerHTML = state.recent.map((r) => {
+      const card = state.cards.find((c) => c.id === r.card_id);
+      const cardName = card ? card.name : '(削除済みカード)';
+      const color = cardColor(r.card_id);
+      const dateLabel = r.used_date.slice(5).replace('-', '/');
+      const [by, bm] = r.billing_month.split('-');
+      const billingLabel = by + '年' + Number(bm) + '月支払';
+      return `
+        <div class="row">
+          <span class="col-date">${dateLabel}</span>
+          <span class="col-card"><span class="dot" style="background:${color};"></span>${escapeHtml(cardName)}</span>
+          <span class="col-merchant">${escapeHtml(r.merchant)}${r.memo ? '（' + escapeHtml(r.memo) + '）' : ''}</span>
+          <span class="col-category">${escapeHtml(r.category || '')}</span>
+          <span class="col-amount">${Number(r.amount).toLocaleString('ja-JP')}円</span>
+          <span class="col-billing">${billingLabel}</span>
+        </div>`;
+    }).join('');
+  }
+
+  async function loadCards() {
+    const { data, error } = await supabaseClient.from('cards').select('*').eq('is_active', true).order('sort_order', { ascending: true });
+    if (error) { showStatus('カード読み込みエラー: ' + error.message, 'error'); return; }
+    state.cards = data;
+    renderCardOptions();
+  }
+
+  async function loadRecent() {
+    const { data, error } = await supabaseClient
+      .from('card_statements')
+      .select('*')
+      .eq('source', 'manual')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) { showStatus('読み込みエラー: ' + error.message, 'error'); return; }
+    state.recent = data;
+    renderRecent();
+  }
+
+  function showStatus(message, kind) {
+    if (!message) { saveStatus.classList.add('hidden'); return; }
+    saveStatus.textContent = message;
+    saveStatus.className = 'status-msg ' + kind;
+  }
+
+  saveButton.addEventListener('click', async () => {
+    const card = selectedCard();
+    if (!card) return;
+
+    const payload = {
+      user_id: state.session.user.id,
+      card_id: card.id,
+      used_date: dateInput.value,
+      amount: Number(amountInput.value),
+      merchant: merchantInput.value.trim(),
+      category: categorySelect.value,
+      memo: memoInput.value.trim() || null,
+      status: 'confirmed',
+      source: 'manual'
+    };
+
+    saveButton.disabled = true;
+    const { data, error } = await supabaseClient.from('card_statements').insert(payload).select().single();
+    saveButton.disabled = false;
+
+    if (error) {
+      showStatus('保存エラー: ' + error.message, 'error');
+      return;
+    }
+
+    showStatus('保存しました。', 'ok');
+    amountInput.value = '';
+    merchantInput.value = '';
+    memoInput.value = '';
+    updateSaveEnabled();
+
+    state.recent = [data].concat(state.recent).slice(0, 10);
+    renderRecent();
+  });
+
+  cardSelect.addEventListener('change', updatePreview);
+  dateInput.addEventListener('change', updatePreview);
+  amountInput.addEventListener('input', updateSaveEnabled);
+  merchantInput.addEventListener('input', updateSaveEnabled);
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    renderCategoryOptions();
+    await loadCards();
+    await loadRecent();
+  })();
+</script>
+
+</body>
+</html>
