@@ -199,7 +199,10 @@
 
     const { error } = await client.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin + window.location.pathname }
+      options: {
+        emailRedirectTo: window.location.origin + window.location.pathname,
+        shouldCreateUser: false // 事前作成したユーザー以外は新規登録させない
+      }
     });
 
     loginButton.disabled = false;
