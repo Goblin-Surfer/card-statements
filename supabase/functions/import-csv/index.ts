@@ -347,6 +347,21 @@ Deno.serve(async (req: Request) => {
       const oldFolder = await findOrCreateFolder(accessToken, folder.id, "old");
       const files = await listCsvFiles(accessToken, folder.id);
 
+      if (files.length === 0) {
+        // 新しいCSVがない場合も「実行はされた」ことが分かるようログを残す
+        await admin.from("import_logs").insert({
+          user_id: card.user_id,
+          card_id: card.id,
+          status: "success",
+          new_count: 0,
+          needs_review_count: 0,
+          source_file_name: null,
+          error_message: "新しいCSVファイルはありませんでした。",
+        });
+        summary.push({ card: card.name, newFiles: 0 });
+        continue;
+      }
+
       for (const file of files) {
         try {
           const bytes = await downloadFile(accessToken, file.id);
