@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>取得ログ | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  p.lead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+
+  .toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .count { margin-left: auto; font-size: 13px; color: var(--text-muted); }
+
+  section.panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+
+  .row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 20px; border-top: 1px solid #ECE6D8; flex-wrap: wrap; }
+  .row.head { align-items: center; border-top: none; border-bottom: 1px solid #C9C2B2; font-size: 12px; font-weight: 700; color: var(--text-muted); }
+  .row.is-error { background: #FBEDEA; }
+
+  .col-time { width: 140px; flex-shrink: 0; font-size: 13px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+  .col-card { width: 160px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .col-file { width: 180px; flex-shrink: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-sub); }
+  .col-counts { width: 140px; flex-shrink: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .col-status { width: 110px; flex-shrink: 0; }
+  .col-detail { flex: 1; min-width: 160px; font-size: 12px; color: var(--text-muted); line-height: 1.5; word-break: break-word; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .pill-success { background: #DDEFE3; color: #14513F; }
+  .pill-error { background: #FBE1DD; color: #8C2E22; }
+  .pill-other { background: #FDECC8; color: #8A5A00; }
+
+  button.btn { min-height: 36px; padding: 0 16px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 13px; font-weight: 500; cursor: pointer; }
+  button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
+  button.btn-primary:disabled { opacity: 0.6; cursor: default; }
+
+  .notice { box-sizing: border-box; padding: 12px 14px; background: #E7F0FB; color: #1D4E86; border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .empty { padding: 40px 20px; text-align: center; font-size: 14px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+
+  .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); border-top-color: #FFFFFF; display: inline-block; animation: spin 0.7s linear infinite; margin-right: 8px; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">カード利用明細</span>
+    <nav aria-label="メイン">
+      <a href="./list.html">明細一覧</a>
+      <a href="./input.html">手入力</a>
+      <a href="./analysis.html">分析</a>
+      <a href="./cards.html">カード設定</a>
+      <a href="./logs.html" class="active" aria-current="page">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>取得ログ</h1>
+    <p class="lead">Googleドライブに配置したCSVから、毎日自動で明細を取り込みます。ここでは実行結果の履歴を確認できるほか、「今すぐ実行」ですぐに取り込みを行えます。</p>
+
+    <p id="error-banner" class="error-banner hidden"></p>
+    <p id="run-notice" class="notice hidden"></p>
+
+    <div class="toolbar">
+      <button type="button" class="btn btn-primary" id="run-now">今すぐ実行</button>
+      <span class="count" id="row-count"></span>
+    </div>
+
+    <section class="panel">
+      <div class="row head">
+        <span class="col-time">実行日時</span>
+        <span class="col-card">カード</span>
+        <span class="col-file">ファイル名</span>
+        <span class="col-counts">新規 / 要確認</span>
+        <span class="col-status">結果</span>
+        <span class="col-detail">詳細</span>
+      </div>
+      <div id="loading-row" class="row"><span style="color:var(--text-muted);">読み込み中…</span></div>
+      <div id="rows"></div>
+      <div id="empty" class="empty hidden">実行履歴はまだありません。</div>
+    </section>
+  </main>
+
+<script>
+  const EDGE_FUNCTION_URL = 'https://mseghmciousmjhcoqgrx.supabase.co/functions/v1/import-csv';
+  const STATUS_LABEL = { success: '成功', error: 'エラー', login_failed: 'ログイン失敗', otp_required: 'OTP要求' };
+
+  const state = {
+    session: null,
+    cards: [],
+    logs: [],
+    loading: true,
+    running: false
+  };
+
+  const errorBanner = document.getElementById('error-banner');
+  const runNotice = document.getElementById('run-notice');
+  const rowCountEl = document.getElementById('row-count');
+  const loadingRow = document.getElementById('loading-row');
+  const rowsEl = document.getElementById('rows');
+  const emptyEl = document.getElementById('empty');
+  const runNowBtn = document.getElementById('run-now');
+
+  function showError(message) {
+    if (!message) { errorBanner.classList.add('hidden'); return; }
+    errorBanner.textContent = message;
+    errorBanner.classList.remove('hidden');
+  }
+
+  function showNotice(message) {
+    if (!message) { runNotice.classList.add('hidden'); return; }
+    runNotice.textContent = message;
+    runNotice.classList.remove('hidden');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function cardName(cardId) {
+    const c = state.cards.find((x) => x.id === cardId);
+    return c ? c.name : '(削除済みカード)';
+  }
+
+  function formatRunAt(iso) {
+    const d = new Date(iso);
+    return d.toLocaleString('ja-JP', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  function renderRows() {
+    loadingRow.classList.toggle('hidden', !state.loading);
+    emptyEl.classList.toggle('hidden', state.loading || state.logs.length > 0);
+    rowCountEl.textContent = state.loading ? '' : state.logs.length + '件';
+
+    rowsEl.innerHTML = state.logs.map((log) => {
+      const isError = log.status !== 'success';
+      const pillClass = log.status === 'success' ? 'pill-success' : (log.status === 'error' ? 'pill-error' : 'pill-other');
+      const pillDot = log.status === 'success' ? '#0CA30C' : (log.status === 'error' ? '#C0392B' : '#FAB219');
+      const statusLabel = STATUS_LABEL[log.status] || log.status;
+
+      return `
+        <div class="row ${isError ? 'is-error' : ''}">
+          <span class="col-time">${escapeHtml(formatRunAt(log.run_at))}</span>
+          <span class="col-card">${escapeHtml(cardName(log.card_id))}</span>
+          <span class="col-file">${escapeHtml(log.source_file_name || '')}</span>
+          <span class="col-counts">${log.new_count} / ${log.needs_review_count}</span>
+          <span class="col-status"><span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${statusLabel}</span></span>
+          <span class="col-detail">${escapeHtml(log.error_message || '')}</span>
+        </div>`;
+    }).join('');
+  }
+
+  async function loadCards() {
+    const { data, error } = await supabaseClient.from('cards').select('*');
+    if (error) { showError('カード読み込みエラー: ' + error.message); return; }
+    state.cards = data;
+  }
+
+  async function loadLogs() {
+    state.loading = true;
+    renderRows();
+
+    const { data, error } = await supabaseClient
+      .from('import_logs')
+      .select('*')
+      .order('run_at', { ascending: false })
+      .limit(100);
+
+    state.loading = false;
+
+    if (error) {
+      showError('ログの読み込みエラー: ' + error.message);
+      state.logs = [];
+    } else {
+      showError(null);
+      state.logs = data;
+    }
+    renderRows();
+  }
+
+  async function runNow() {
+    if (state.running) return;
+    state.running = true;
+    showError(null);
+    showNotice(null);
+    runNowBtn.disabled = true;
+    runNowBtn.innerHTML = '<span class="spinner"></span>実行中…';
+
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (!session) { showError('セッションが切れています。再度ログインしてください。'); return; }
+
+      const res = await fetch(EDGE_FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + session.access_token,
+          'Content-Type': 'application/json'
+        },
+        body: '{}'
+      });
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok || !body || body.ok === false) {
+        const msg = body && body.error ? body.error : ('HTTP ' + res.status);
+        showError('実行エラー: ' + msg);
+      } else {
+        const summary = Array.isArray(body.summary) ? body.summary : [];
+        showNotice('実行完了しました（対象カード: ' + summary.length + '件）。下の一覧を更新しました。');
+      }
+    } catch (e) {
+      showError('実行エラー: ' + (e && e.message ? e.message : String(e)));
+    } finally {
+      state.running = false;
+      runNowBtn.disabled = false;
+      runNowBtn.textContent = '今すぐ実行';
+      await loadLogs();
+    }
+  }
+
+  runNowBtn.addEventListener('click', runNow);
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    await loadCards();
+    await loadLogs();
+  })();
+</script>
+
+</body>
+</html>
