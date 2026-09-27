@@ -22,6 +22,17 @@ const GOOGLE_REFRESH_TOKEN = Deno.env.get("GOOGLE_REFRESH_TOKEN")!;
 const DRIVE_ROOT_FOLDER_ID = Deno.env.get("DRIVE_ROOT_FOLDER_ID")!; // 「カード明細インポート」フォルダのID
 
 // ---------------------------------------------------------------------------
+// CORS: GitHub Pages（ブラウザの「今すぐ実行」ボタン）から直接fetchするため、
+// プリフライト(OPTIONS)と各レスポンスにCORSヘッダーを付与する
+// ---------------------------------------------------------------------------
+const ALLOWED_ORIGIN = "https://goblin-surfer.github.io";
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Headers": "authorization, x-cron-secret, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+// ---------------------------------------------------------------------------
 // Google OAuth: リフレッシュトークンから都度アクセストークンを取得
 // ---------------------------------------------------------------------------
 async function getGoogleAccessToken(): Promise<string> {
@@ -264,6 +275,10 @@ async function computeImportHash(cardId: string, row: ParsedRow): Promise<string
 // メイン処理
 // ---------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: CORS_HEADERS });
+  }
+
   try {
     // --- 認可チェック ---
     const cronHeader = req.headers.get("x-cron-secret") ?? "";
@@ -283,7 +298,7 @@ Deno.serve(async (req: Request) => {
     if (!authorized) {
       return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
         status: 401,
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...CORS_HEADERS },
       });
     }
 
@@ -394,12 +409,12 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(JSON.stringify({ ok: true, summary }), {
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: errorMessage(e).slice(0, 500) }), {
       status: 500,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
   }
 });

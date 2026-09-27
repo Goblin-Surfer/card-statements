@@ -114,7 +114,9 @@
     cards: [],
     logs: [],
     loading: true,
-    running: false
+    running: false,
+    listError: null,
+    runError: null
   };
 
   const errorBanner = document.getElementById('error-banner');
@@ -125,7 +127,10 @@
   const emptyEl = document.getElementById('empty');
   const runNowBtn = document.getElementById('run-now');
 
-  function showError(message) {
+  // 「今すぐ実行」のエラーと一覧読み込みのエラーは別々に保持し、
+  // 一覧の再読み込みが成功しても実行エラーの表示が消えないようにする
+  function renderBanner() {
+    const message = state.runError || state.listError;
     if (!message) { errorBanner.classList.add('hidden'); return; }
     errorBanner.textContent = message;
     errorBanner.classList.remove('hidden');
@@ -179,7 +184,7 @@
 
   async function loadCards() {
     const { data, error } = await supabaseClient.from('cards').select('*');
-    if (error) { showError('カード読み込みエラー: ' + error.message); return; }
+    if (error) { state.listError = 'カード読み込みエラー: ' + error.message; renderBanner(); return; }
     state.cards = data;
   }
 
@@ -196,26 +201,28 @@
     state.loading = false;
 
     if (error) {
-      showError('ログの読み込みエラー: ' + error.message);
+      state.listError = 'ログの読み込みエラー: ' + error.message;
       state.logs = [];
     } else {
-      showError(null);
+      state.listError = null;
       state.logs = data;
     }
+    renderBanner();
     renderRows();
   }
 
   async function runNow() {
     if (state.running) return;
     state.running = true;
-    showError(null);
+    state.runError = null;
+    renderBanner();
     showNotice(null);
     runNowBtn.disabled = true;
     runNowBtn.innerHTML = '<span class="spinner"></span>実行中…';
 
     try {
       const { data: { session } } = await supabaseClient.auth.getSession();
-      if (!session) { showError('セッションが切れています。再度ログインしてください。'); return; }
+      if (!session) { state.runError = 'セッションが切れています。再度ログインしてください。'; return; }
 
       const res = await fetch(EDGE_FUNCTION_URL, {
         method: 'POST',
@@ -230,17 +237,19 @@
 
       if (!res.ok || !body || body.ok === false) {
         const msg = body && body.error ? body.error : ('HTTP ' + res.status);
-        showError('実行エラー: ' + msg);
+        state.runError = '実行エラー: ' + msg;
       } else {
         const summary = Array.isArray(body.summary) ? body.summary : [];
         showNotice('実行完了しました（対象カード: ' + summary.length + '件）。下の一覧を更新しました。');
       }
     } catch (e) {
-      showError('実行エラー: ' + (e && e.message ? e.message : String(e)));
+      state.runError = '実行エラー: ' + (e && e.message ? e.message : String(e)) +
+        (e && e.message === 'Failed to fetch' ? '（ネットワークまたはCORSの問題の可能性があります）' : '');
     } finally {
       state.running = false;
       runNowBtn.disabled = false;
       runNowBtn.textContent = '今すぐ実行';
+      renderBanner();
       await loadLogs();
     }
   }
