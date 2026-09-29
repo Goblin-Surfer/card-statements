@@ -190,9 +190,16 @@ function parseCsvLine(line: string): string[] {
 }
 
 function normalizeDate(raw: string, format: string): string {
-  // 今のところ "YYYY/MM/DD" のみ対応。将来カード会社が増えたら分岐を追加する。
+  // "YYYY/MM/DD"（Vpass, アメックス, JCB, SAISON）と
+  // "YYYY-MM-DD"（To Me CARD/NICOS）に対応。今後カード会社が増えたら分岐を追加する。
   if (format === "YYYY/MM/DD") {
     const m = raw.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+    if (!m) throw new Error(`日付の形式が想定外です: ${raw}`);
+    const [, y, mo, d] = m;
+    return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  if (format === "YYYY-MM-DD") {
+    const m = raw.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (!m) throw new Error(`日付の形式が想定外です: ${raw}`);
     const [, y, mo, d] = m;
     return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
