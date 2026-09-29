@@ -82,6 +82,7 @@
   }
   .col-active { width: 56px; flex-shrink: 0; }
   .col-card { width: 260px; flex-shrink: 0; }
+  .col-issuer { width: 110px; flex-shrink: 0; }
   .col-closing { width: 120px; flex-shrink: 0; }
   .col-payment { width: 110px; flex-shrink: 0; }
   .col-actions { flex: 1; display: flex; justify-content: flex-end; gap: 10px; }
@@ -145,7 +146,8 @@
     </div>
 
     <div class="notice">
-      ログインID・パスワードはこの画面では管理しません。自動取得（現在はVpassのみ対応予定）に必要な認証情報は、実行環境（GitHub Actions）のシークレットとして別途設定します。
+      ログインID・パスワードはこの画面では管理しません。自動取得に必要な認証情報は、実行環境（GitHub Actions）のシークレットとして別途設定します。<br>
+      「CSV形式コード」は、そのカードのCSV解析設定（csv_import_profiles）と紐づけるための識別子です（例: smbc, amex, jcb, saison）。同じ発行会社・同じCSV書式のカードは同じコードにしてください。
     </div>
 
     <p id="error-banner" class="error-banner hidden"></p>
@@ -156,6 +158,7 @@
       <div class="row head">
         <span class="col-active">有効</span>
         <span class="col-card">カード</span>
+        <span class="col-issuer">CSV形式</span>
         <span class="col-closing">締め日</span>
         <span class="col-payment">支払日</span>
         <span class="col-actions"></span>
@@ -172,6 +175,10 @@
             <span class="field-note">下4桁</span>
             <input type="text" id="new-last4" style="width:80px;" placeholder="0000" maxlength="4" inputmode="numeric">
           </div>
+        </div>
+        <div class="add-field" style="width:120px;">
+          <input type="text" id="new-issuer" style="width:100%;" placeholder="issuer（例: jcb）">
+          <span class="field-note">CSV形式コード</span>
         </div>
         <div class="add-field" style="width:120px;">
           <select id="new-closing-day">
@@ -277,6 +284,13 @@
           </div>`;
       }
 
+      let issuerCell;
+      if (editing) {
+        issuerCell = `<input type="text" data-field="issuer" data-id="${c.id}" value="${escapeAttr(c.issuer || '')}" style="width:100px;">`;
+      } else {
+        issuerCell = `<span class="muted">${escapeHtml(c.issuer || '(未設定)')}</span>`;
+      }
+
       let closingCell;
       if (editing) {
         closingCell = `<select data-field="closing_day" data-id="${c.id}">${closingOptionsHtml(c.closes_at_month_end ? 'eom' : c.closing_day)}</select>`;
@@ -309,6 +323,7 @@
         <div class="row" data-row-id="${c.id}">
           <span class="col-active">${switchHtml}</span>
           <span class="col-card">${cardCell}</span>
+          <span class="col-issuer">${issuerCell}</span>
           <span class="col-closing">${closingCell}</span>
           <span class="col-payment">${paymentCell}</span>
           <span class="col-actions">${actionsCell}</span>
@@ -356,14 +371,17 @@
     const row = listEl.querySelector(`[data-row-id="${id}"]`);
     const name = row.querySelector('[data-field="name"]').value.trim();
     const last4 = row.querySelector('[data-field="last4"]').value.replace(/[^0-9]/g, '').slice(0, 4);
+    const issuer = row.querySelector('[data-field="issuer"]').value.trim();
     const closingRaw = row.querySelector('[data-field="closing_day"]').value;
     const paymentDay = Number(row.querySelector('[data-field="payment_day"]').value);
 
     if (!name) { showError(errorBanner, 'カード名を入力してください'); return; }
+    if (!issuer) { showError(errorBanner, 'CSV形式コード（issuer）を入力してください'); return; }
 
     const patch = {
       name,
       last4: last4 || null,
+      issuer,
       payment_day: paymentDay,
       closes_at_month_end: closingRaw === 'eom',
       closing_day: closingRaw === 'eom' ? null : Number(closingRaw)
@@ -383,23 +401,20 @@
     await loadCards();
   }
 
-  function slugify(name) {
-    const ascii = name.replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
-    return ascii || 'card' + Date.now();
-  }
-
   document.getElementById('add-button').addEventListener('click', async () => {
     const name = document.getElementById('new-name').value.trim();
     const last4Raw = document.getElementById('new-last4').value.replace(/[^0-9]/g, '').slice(0, 4);
+    const issuer = document.getElementById('new-issuer').value.trim();
     const closingRaw = document.getElementById('new-closing-day').value;
     const paymentDay = Number(document.getElementById('new-payment-day').value) || 27;
 
     if (!name) { showError(addError, 'カード名を入力してください'); return; }
+    if (!issuer) { showError(addError, 'CSV形式コード（issuer）を入力してください。未対応の会社の場合は、まず管理者にCSV解析設定の追加を依頼してください'); return; }
     if (last4Raw && !/^[0-9]{4}$/.test(last4Raw)) { showError(addError, '下4桁は数字4桁で入力してください'); return; }
 
     const payload = {
       user_id: state.session.user.id,
-      issuer: slugify(name),
+      issuer,
       name,
       last4: last4Raw || null,
       payment_day: paymentDay,
@@ -414,6 +429,7 @@
     showError(addError, null);
     document.getElementById('new-name').value = '';
     document.getElementById('new-last4').value = '';
+    document.getElementById('new-issuer').value = '';
     document.getElementById('new-closing-day').value = '15';
     document.getElementById('new-payment-day').value = '27';
     await loadCards();

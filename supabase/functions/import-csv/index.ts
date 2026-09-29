@@ -322,13 +322,9 @@ Deno.serve(async (req: Request) => {
     const summary: Record<string, unknown>[] = [];
 
     for (const card of cards ?? []) {
-      const folder = await findChildByName(
-        accessToken,
-        DRIVE_ROOT_FOLDER_ID,
-        card.name,
-        "application/vnd.google-apps.folder",
-      );
-      if (!folder) continue; // このカード用のフォルダがまだない場合は何もしない
+      // カード用のフォルダが無ければ自動作成する（新しいカードを登録した直後で
+      // まだDrive側にフォルダを作っていない場合でも、エラーにも無反応にもしない）
+      const folder = await findOrCreateFolder(accessToken, DRIVE_ROOT_FOLDER_ID, card.name);
 
       const profile = profileByIssuer.get(card.issuer);
       if (!profile) {
