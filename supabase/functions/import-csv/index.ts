@@ -223,6 +223,9 @@ function parseCsv(bytes: Uint8Array, profile: Profile): ParseResult {
     const cells = parseCsvLine(line);
     const dateRaw = (cells[profile.date_column] ?? "").trim();
     if (profile.skip_if_date_empty && dateRaw === "") continue; // 合計行などをスキップ
+    // 日付欄が全角/半角のダッシュだけの行（カード会社のCSVに混ざる「小計」区切り行など）は
+    // 利用明細ではないので、要確認扱いにもせず無条件で読み飛ばす
+    if (/^[-－]+$/.test(dateRaw)) continue;
 
     const merchant = (cells[profile.merchant_column] ?? "").trim();
     const amountRaw = (cells[profile.amount_column] ?? "").trim();
