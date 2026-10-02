@@ -12,6 +12,14 @@
 //
 // デプロイ: supabase functions deploy import-csv --no-verify-jwt
 // （JWT検証はこの関数の中で独自に行うため、Supabase標準の自動検証は無効にする）
+//
+// カテゴリ自動分類: merchant_categories（利用先キーワード→カテゴリ、priority）に
+// 一致すればそれを使う。一致しない「初めての利用先」は、
+// CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN が設定されていれば
+// Cloudflare Workers AI に推測してもらい、結果をその場でmerchant_categoriesに
+// 記録する（次回以降はAI判定なしで自動分類される）。AIが「不明」と判断した場合や
+// シークレット未設定の場合はcategoryをnullのままにし、list.html側で
+// 人間の判断に回す。
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -25,6 +33,13 @@ const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID")!;
 const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 const GOOGLE_REFRESH_TOKEN = Deno.env.get("GOOGLE_REFRESH_TOKEN")!;
 const DRIVE_ROOT_FOLDER_ID = Deno.env.get("DRIVE_ROOT_FOLDER_ID")!; // 「カード明細インポート」フォルダのID
+
+// Cloudflare Workers AI（カテゴリ自動分類のAI判定、任意機能）
+// 未設定の場合はAI判定を使わず、ルールに一致しない利用先はそのまま
+// カテゴリ未設定（人間の判断待ち）になる。設定は必須ではない。
+const CLOUDFLARE_ACCOUNT_ID = Deno.env.get("CLOUDFLARE_ACCOUNT_ID") ?? "";
+const CLOUDFLARE_API_TOKEN = Deno.env.get("CLOUDFLARE_API_TOKEN") ?? "";
+const CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
 // ---------------------------------------------------------------------------
 // CORS: GitHub Pages（ブラウザの「今すぐ実行」ボタン）から直接fetchするため、
@@ -312,6 +327,57 @@ function resolveCategory(
   return matches[0].category_name;
 }
 
+// list.html の CATS と必ず同じ内容にすること（手入力・一覧の分類と食い違わないように）
+const CATEGORY_LIST = ["食費", "日用品", "水道光熱", "通信", "交通費", "その他"];
+
+// ---------------------------------------------------------------------------
+// カテゴリ自動分類（AI判定・任意機能）
+// merchant_categories に一致するルールが無い「初めての利用先」だけ、
+// Cloudflare Workers AI に推測してもらう。モデルが自信を持って判断できない
+// 場合（「不明」や、6カテゴリ以外の出力）はnullを返し、人間の判断に回す。
+// APIキー未設定・通信エラー・タイムアウトなど何が起きても例外を投げず、
+// 常にnullにフォールバックして取込全体を止めないようにする。
+// ---------------------------------------------------------------------------
+async function classifyWithAI(merchant: string): Promise<string | null> {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) return null;
+
+  const prompt = `あなたは日本のクレジットカード利用明細を分類するアシスタントです。
+次のカテゴリ一覧から最も当てはまるものを一つだけ選び、そのカテゴリ名だけを1行で出力してください。
+説明や記号は付けないでください。自信を持って判断できない場合は「不明」と出力してください。
+
+カテゴリ一覧: ${CATEGORY_LIST.join(", ")}
+
+利用先: ${merchant}
+
+カテゴリ:`;
+
+  try {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${CLOUDFLARE_AI_MODEL}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ prompt }),
+      },
+    );
+    if (!res.ok) {
+      console.error(`Cloudflare Workers AI error (${res.status}): ${await res.text()}`);
+      return null;
+    }
+    const body = await res.json();
+    const raw = String(body?.result?.response ?? "").trim();
+    // モデルが指示通り1行だけ返すとは限らないので、1行目だけを見て判定する
+    const firstLine = raw.split(/\r?\n/)[0].trim().replace(/^[「"']|[」"']$/g, "");
+    return CATEGORY_LIST.includes(firstLine) ? firstLine : null;
+  } catch (e) {
+    console.error("Cloudflare Workers AI call failed:", errorMessage(e));
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // メイン処理
 // ---------------------------------------------------------------------------
@@ -417,22 +483,52 @@ Deno.serve(async (req: Request) => {
           const bytes = await downloadFile(accessToken, file.id);
           const { rows, skipped } = parseCsv(bytes, profile);
 
-          const insertRows = await Promise.all(
-            rows.map(async (r) => ({
+          // 1行ずつ順番に処理する（同じ利用先が同じファイル内に複数回出てきたとき、
+          // 2回目以降はAI判定を呼ばずにこの場で更新したルールを再利用するため）
+          const insertRows: Record<string, unknown>[] = [];
+          for (const r of rows) {
+            // 1. まずナレッジ（merchant_categories）に一致するか確認
+            let category = resolveCategory(categoryRulesByUser, card.user_id, r.merchant);
+
+            // 2. 一致しない「初めての利用先」だけ、Cloudflare Workers AIに判定してもらう
+            if (!category) {
+              const aiCategory = await classifyWithAI(r.merchant);
+              if (aiCategory) {
+                category = aiCategory;
+
+                // 次回以降（このファイル内の後続行も含む）は同じ利用先が
+                // AI判定なしで自動分類されるよう、その場でナレッジに記録する
+                const rules = categoryRulesByUser.get(card.user_id) ?? [];
+                rules.push({ keyword: r.merchant, category_name: aiCategory, priority: 0 });
+                categoryRulesByUser.set(card.user_id, rules);
+
+                const { error: ruleError } = await admin.from("merchant_categories").upsert(
+                  { user_id: card.user_id, keyword: r.merchant, category_name: aiCategory, priority: 0 },
+                  { onConflict: "user_id,keyword" },
+                );
+                // ナレッジ登録に失敗しても、この行のカテゴリ設定自体は成立しているので
+                // 取込全体は止めず、ログだけ残す
+                if (ruleError) {
+                  console.error("merchant_categories upsert (AI) failed:", errorMessage(ruleError));
+                }
+              }
+              // AIも「不明」や想定外の出力だった場合は category は null のまま
+              // → list.html で「カテゴリ未設定」として人間の判断に回る
+            }
+
+            insertRows.push({
               user_id: card.user_id,
               card_id: card.id,
               used_date: r.used_date,
               amount: r.amount,
               merchant: r.merchant,
-              // merchant_categories のナレッジに一致すれば自動設定、
-              // 一致しなければ null（= 未設定）のままにして人間の判断に回す
-              category: resolveCategory(categoryRulesByUser, card.user_id, r.merchant),
+              category,
               memo: r.memo,
               status: "confirmed",
               source: "auto",
               import_hash: await computeImportHash(card.id, r),
-            })),
-          );
+            });
+          }
 
           let newCount = 0;
           if (insertRows.length > 0) {
