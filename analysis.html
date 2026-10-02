@@ -91,6 +91,8 @@
   .merchant-bar { display: block; height: 14px; background: var(--blue); border-radius: 0 4px 4px 0; }
   .merchant-value { font-size: 13px; font-weight: 700; white-space: nowrap; }
   .merchant-share { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+  .insight-line { font-size: 14px; line-height: 1.7; color: var(--text-sub); margin: 0 0 10px; }
+  .insight-line:last-child { margin-bottom: 0; }
 
   .notice { box-sizing: border-box; padding: 14px 16px; background: #EAF1FB; border: 1px solid #CBDFF5; border-radius: 10px; font-size: 13px; line-height: 1.6; color: #1F4E8C; }
   .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
@@ -190,10 +192,16 @@
       <div class="col-right">
 
         <section class="panel">
-          <h2>利用先ごとの集計</h2>
+          <h2>カテゴリ別の集計</h2>
           <div class="sub" id="merchant-sub"></div>
           <div id="merchant-rows"></div>
           <div id="merchant-empty" class="empty hidden">この月の確定済み明細がありません。</div>
+        </section>
+
+        <section class="panel">
+          <h2>今月の状況・改善案</h2>
+          <div class="sub" id="insights-sub"></div>
+          <div id="insights-body"></div>
         </section>
 
       </div>
@@ -211,7 +219,7 @@
     cards: [],
     year: today.getFullYear(),
     month: today.getMonth() + 1,
-    monthsData: [], // [{year, month, total, byCard:{cardId:sum}, merchants:{name:sum}}]
+    monthsData: [], // [{year, month, total, byCard:{cardId:sum}, categories:{categoryName:sum}}]
     tableView: false,
     loading: true
   };
@@ -258,7 +266,7 @@
 
     const { data, error } = await supabaseClient
       .from('card_statements')
-      .select('billing_month, card_id, amount, merchant')
+      .select('billing_month, card_id, amount, merchant, category')
       .eq('status', 'confirmed')
       .gte('billing_month', startIso)
       .lte('billing_month', endIso);
@@ -277,14 +285,15 @@
       const key = isoMonthStart(m.year, m.month);
       const rowsInMonth = data.filter((r) => r.billing_month === key);
       const byCard = {};
-      const merchants = {};
+      const categories = {};
       let total = 0;
       rowsInMonth.forEach((r) => {
         byCard[r.card_id] = (byCard[r.card_id] || 0) + Number(r.amount);
-        merchants[r.merchant] = (merchants[r.merchant] || 0) + Number(r.amount);
+        const categoryKey = r.category || '未分類';
+        categories[categoryKey] = (categories[categoryKey] || 0) + Number(r.amount);
         total += Number(r.amount);
       });
-      return { ...m, total, byCard, merchants };
+      return { ...m, total, byCard, categories };
     });
 
     renderAll();
@@ -304,7 +313,8 @@
     renderHero();
     renderTrend();
     renderByCard();
-    renderMerchants();
+    renderCategories();
+    renderInsights();
   }
 
   function currentMonthData() {
@@ -431,12 +441,12 @@
     ).join('');
   }
 
-  function renderMerchants() {
+  function renderCategories() {
     const cur = currentMonthData();
     document.getElementById('merchant-sub').textContent = state.year + '年' + state.month + '月支払分・金額の大きい順';
     if (!cur) return;
 
-    const entries = Object.entries(cur.merchants).sort((a, b) => b[1] - a[1]);
+    const entries = Object.entries(cur.categories).sort((a, b) => b[1] - a[1]);
     document.getElementById('merchant-empty').classList.toggle('hidden', entries.length > 0);
 
     const max = entries.length ? entries[0][1] : 1;
@@ -452,6 +462,92 @@
           </div>
         </div>`;
     }).join('');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 今月の状況説明・改善案（API呼び出しなし。カテゴリ別集計と前月比だけから
+  // テンプレート文を組み立てる。集計ロジックが変われば文面も自動的に変わる）
+  // ---------------------------------------------------------------------------
+  function deltaSpan(diff) {
+    const color = diff > 0 ? 'var(--bad)' : (diff < 0 ? 'var(--good)' : 'var(--text-sub)');
+    const sign = diff > 0 ? '+' : (diff < 0 ? '-' : '');
+    return `<span style="color:${color};font-weight:700;">${sign}${fmt(Math.abs(diff))}円</span>`;
+  }
+
+  function renderInsights() {
+    const cur = currentMonthData();
+    const prev = prevMonthData();
+    const subEl = document.getElementById('insights-sub');
+    const bodyEl = document.getElementById('insights-body');
+    subEl.textContent = state.year + '年' + state.month + '月支払分';
+
+    if (!cur || cur.total <= 0) {
+      bodyEl.innerHTML = '<p class="insight-line">この月の確定済み明細がまだありません。</p>';
+      return;
+    }
+
+    const lines = [];
+
+    // 1. 総額と前月比
+    if (prev && prev.total > 0) {
+      const diff = cur.total - prev.total;
+      lines.push(`今月の支出は${fmt(cur.total)}円で、前月（${fmt(prev.total)}円）から${deltaSpan(diff)}です。`);
+    } else {
+      lines.push(`今月の支出は${fmt(cur.total)}円です。`);
+    }
+
+    // 2. カテゴリ別で最も支出が多いもの
+    const entries = Object.entries(cur.categories).sort((a, b) => b[1] - a[1]);
+    const [topName, topValue] = entries[0];
+    const topShare = cur.total > 0 ? Math.round((topValue / cur.total) * 100) : 0;
+    const prevTopValue = prev ? (prev.categories[topName] || 0) : 0;
+    const topDiff = topValue - prevTopValue;
+
+    if (topName === '未分類') {
+      lines.push(
+        `最も金額が大きいのは「未分類」で${fmt(topValue)}円（全体の${topShare}%）です。` +
+        `明細一覧でカテゴリを設定すると、この分析がより正確になります。`
+      );
+    } else if (prev && prevTopValue > 0) {
+      lines.push(
+        `最も支出が多いのは「${escapeHtml(topName)}」で${fmt(topValue)}円（全体の${topShare}%）、` +
+        `前月から${deltaSpan(topDiff)}です。`
+      );
+    } else {
+      lines.push(`最も支出が多いのは「${escapeHtml(topName)}」で${fmt(topValue)}円（全体の${topShare}%）です。`);
+    }
+
+    // 3. 前月から最も増えたカテゴリ（1のトップと別なら触れる）
+    if (prev) {
+      let riseName = null;
+      let riseDiff = 0;
+      entries.forEach(([name, value]) => {
+        const d = value - (prev.categories[name] || 0);
+        if (d > riseDiff) { riseDiff = d; riseName = name; }
+      });
+      if (riseName && riseName !== topName && riseName !== '未分類') {
+        lines.push(`前月から支出が最も増えたのは「${escapeHtml(riseName)}」で、${deltaSpan(riseDiff)}増えています。`);
+      }
+    }
+
+    // 4. 未分類の注意喚起（トップでなくても一定割合あれば触れる）
+    const unresolved = cur.categories['未分類'] || 0;
+    if (topName !== '未分類' && unresolved > 0) {
+      const unresolvedShare = cur.total > 0 ? Math.round((unresolved / cur.total) * 100) : 0;
+      if (unresolvedShare >= 5) {
+        lines.push(
+          `「未分類」が${fmt(unresolved)}円（全体の${unresolvedShare}%）あります。` +
+          `明細一覧でカテゴリを設定すると、次回以降は同じ利用先が自動的に分類されます。`
+        );
+      }
+    }
+
+    // 5. 改善案（トップのカテゴリが前月より増えているときだけ提案する）
+    if (topName !== '未分類' && prev && prevTopValue > 0 && topDiff > 0) {
+      lines.push(`次回は「${escapeHtml(topName)}」の使い方を中心に見直すと、支出を抑えやすそうです。`);
+    }
+
+    bodyEl.innerHTML = lines.map((l) => `<p class="insight-line">${l}</p>`).join('');
   }
 
   document.getElementById('prev-month').addEventListener('click', () => {

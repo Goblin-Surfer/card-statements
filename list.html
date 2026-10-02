@@ -46,6 +46,7 @@
   .row { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-top: 1px solid #ECE6D8; flex-wrap: wrap; }
   .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-size: 12px; font-weight: 700; color: var(--text-muted); }
   .row.needs-review { background: #FFF8ED; }
+  .row.needs-category { background: #F3ECFB; }
 
   .col-date { width: 64px; flex-shrink: 0; font-size: 13px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
   .col-card { width: 160px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; }
@@ -53,7 +54,7 @@
   .col-category { width: 140px; flex-shrink: 0; }
   .col-amount { width: 100px; flex-shrink: 0; text-align: right; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .col-memo { flex: 1; min-width: 140px; }
-  .col-status { width: 190px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .col-status { width: 260px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
@@ -62,6 +63,7 @@
   .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap; }
   .pill-review { background: #FDECC8; color: #8A5A00; }
   .pill-confirmed { background: #DDEFE3; color: #14513F; }
+  .pill-category { background: #EEE3FB; color: #4B2E83; }
 
   button.btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; }
   button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
@@ -115,7 +117,7 @@
       <div id="empty" class="empty hidden">この条件に一致する明細はありません。</div>
     </section>
 
-    <p class="lead">「要確認」は自動取得したばかりの明細です。分類・メモを直して「確定」を押すと、分析の集計対象になります。</p>
+    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「要確認」は金額や日付の形式が想定外で自動取込できなかった明細です。内容を直して「確定」を押すと集計対象になります。</p>
   </main>
 
 <script>
@@ -191,7 +193,8 @@
   }
 
   function categoryOptionsHtml(selected) {
-    return CATS.map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
+    const emptyOption = `<option value="" ${selected ? '' : 'selected'}>(未設定)</option>`;
+    return emptyOption + CATS.map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
   }
 
   function renderRows() {
@@ -202,7 +205,8 @@
     rowsEl.innerHTML = state.rows.map((r) => {
       const meta = cardMeta(r.card_id);
       const needsReview = r.status === 'needs_review';
-      const editing = needsReview || state.editingIds.has(r.id);
+      const needsCategory = !r.category;
+      const editing = needsReview || needsCategory || state.editingIds.has(r.id);
       const edit = state.edits[r.id] || { category: r.category || '', memo: r.memo || '' };
 
       const dateLabel = r.used_date.slice(5).replace('-', '/');
@@ -218,6 +222,9 @@
       let actionCell;
       if (needsReview) {
         actionCell = `<button type="button" class="btn btn-primary" data-action="confirm" data-id="${r.id}">確定</button>`;
+      } else if (needsCategory && !state.editingIds.has(r.id)) {
+        // すでに確定済みだがカテゴリ未設定（初めての利用先など）→ 分類を選んで保存するだけでよい
+        actionCell = `<button type="button" class="btn btn-primary" data-action="confirm" data-id="${r.id}">保存</button>`;
       } else if (state.editingIds.has(r.id)) {
         actionCell = `
           <button type="button" class="btn" data-action="cancel-edit" data-id="${r.id}">キャンセル</button>
@@ -229,9 +236,14 @@
       const pillClass = needsReview ? 'pill-review' : 'pill-confirmed';
       const pillLabel = needsReview ? '要確認' : '確定';
       const pillDot = needsReview ? '#FAB219' : '#0CA30C';
+      const categoryBadge = needsCategory
+        ? `<span class="pill pill-category"><span class="dot" style="background:#7C4DBE;"></span>カテゴリ未設定</span>`
+        : '';
+
+      const rowClass = needsReview ? 'needs-review' : (needsCategory ? 'needs-category' : '');
 
       return `
-        <div class="row ${needsReview ? 'needs-review' : ''}" data-row-id="${r.id}">
+        <div class="row ${rowClass}" data-row-id="${r.id}">
           <span class="col-date">${dateLabel}</span>
           <span class="col-card"><span class="dot" style="background:${meta.color};"></span>${escapeHtml(meta.name)}</span>
           <span class="col-merchant">${escapeHtml(r.merchant)}</span>
@@ -239,6 +251,7 @@
           <span class="col-amount">${Number(r.amount).toLocaleString('ja-JP')}円</span>
           <span class="col-memo">${memoCell}</span>
           <span class="col-status">
+            ${categoryBadge}
             <span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${pillLabel}</span>
             ${actionCell}
           </span>
@@ -289,11 +302,26 @@
 
   async function saveRow(id, confirm) {
     const edit = state.edits[id] || {};
-    const patch = { category: edit.category || null, memo: edit.memo || null };
+    const category = edit.category || null;
+    const patch = { category, memo: edit.memo || null };
     if (confirm) patch.status = 'confirmed';
 
     const { error } = await supabaseClient.from('card_statements').update(patch).eq('id', id);
     if (error) { showError('更新エラー: ' + error.message); return; }
+
+    // カテゴリを設定/修正した場合は、その利用先をナレッジ（merchant_categories）に
+    // 記録しておく。次回以降、同じ利用先は自動的に同じカテゴリで取り込まれる。
+    if (category) {
+      const row = state.rows.find((r) => r.id === id);
+      if (row) {
+        const { error: ruleError } = await supabaseClient.from('merchant_categories').upsert(
+          { user_id: state.session.user.id, keyword: row.merchant, category_name: category, priority: 0 },
+          { onConflict: 'user_id,keyword' },
+        );
+        // ナレッジの保存に失敗しても明細自体の保存は成立しているので、画面には出さずログのみに残す
+        if (ruleError) console.error('merchant_categories upsert failed:', ruleError);
+      }
+    }
 
     showError(null);
     state.editingIds.delete(id);

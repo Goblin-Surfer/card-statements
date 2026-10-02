@@ -287,6 +287,32 @@ async function computeImportHash(cardId: string, row: ParsedRow): Promise<string
 }
 
 // ---------------------------------------------------------------------------
+// カテゴリ自動分類（merchant_categories をナレッジとして使う）
+// 利用先(merchant)に keyword が含まれる行の中から、priority が高いもの
+// （同じ priority なら keyword が長い=より具体的なもの）を採用する。
+// 一致するルールが無ければ null を返し、list.html 側で人間に判断してもらう。
+// ---------------------------------------------------------------------------
+type CategoryRule = { keyword: string; category_name: string; priority: number };
+
+function resolveCategory(
+  rulesByUser: Map<string, CategoryRule[]>,
+  userId: string,
+  merchant: string,
+): string | null {
+  const rules = rulesByUser.get(userId);
+  if (!rules || rules.length === 0) return null;
+
+  const matches = rules.filter((r) => r.keyword.length > 0 && merchant.includes(r.keyword));
+  if (matches.length === 0) return null;
+
+  matches.sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return b.keyword.length - a.keyword.length;
+  });
+  return matches[0].category_name;
+}
+
+// ---------------------------------------------------------------------------
 // メイン処理
 // ---------------------------------------------------------------------------
 Deno.serve(async (req: Request) => {
@@ -322,17 +348,30 @@ Deno.serve(async (req: Request) => {
 
     const accessToken = await getGoogleAccessToken();
 
-    const [{ data: cards, error: cardsErr }, { data: profiles, error: profilesErr }] =
-      await Promise.all([
-        admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
-        admin.from("csv_import_profiles").select("*"),
-      ]);
+    const [
+      { data: cards, error: cardsErr },
+      { data: profiles, error: profilesErr },
+      { data: categoryRuleRows, error: categoryRulesErr },
+    ] = await Promise.all([
+      admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
+      admin.from("csv_import_profiles").select("*"),
+      admin.from("merchant_categories").select("user_id, keyword, category_name, priority"),
+    ]);
     if (cardsErr) throw cardsErr;
     if (profilesErr) throw profilesErr;
+    if (categoryRulesErr) throw categoryRulesErr;
 
     const profileByIssuer = new Map<string, Profile>(
       (profiles ?? []).map((p: Profile) => [p.issuer, p]),
     );
+
+    // user_id ごとに「利用先→カテゴリ」のナレッジをまとめておく
+    const categoryRulesByUser = new Map<string, CategoryRule[]>();
+    for (const r of categoryRuleRows ?? []) {
+      const list = categoryRulesByUser.get(r.user_id) ?? [];
+      list.push({ keyword: r.keyword, category_name: r.category_name, priority: r.priority });
+      categoryRulesByUser.set(r.user_id, list);
+    }
 
     const summary: Record<string, unknown>[] = [];
 
@@ -385,6 +424,9 @@ Deno.serve(async (req: Request) => {
               used_date: r.used_date,
               amount: r.amount,
               merchant: r.merchant,
+              // merchant_categories のナレッジに一致すれば自動設定、
+              // 一致しなければ null（= 未設定）のままにして人間の判断に回す
+              category: resolveCategory(categoryRulesByUser, card.user_id, r.merchant),
               memo: r.memo,
               status: "confirmed",
               source: "auto",
