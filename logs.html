@@ -95,7 +95,7 @@
         <span class="col-time">実行日時</span>
         <span class="col-card">カード</span>
         <span class="col-file">ファイル名</span>
-        <span class="col-counts">新規 / 要確認</span>
+        <span class="col-counts">新規件数</span>
         <span class="col-status">結果</span>
         <span class="col-detail">詳細</span>
       </div>
@@ -175,7 +175,7 @@
           <span class="col-time">${escapeHtml(formatRunAt(log.run_at))}</span>
           <span class="col-card">${escapeHtml(cardName(log.card_id))}</span>
           <span class="col-file">${escapeHtml(log.source_file_name || '')}</span>
-          <span class="col-counts">${log.new_count} / ${log.needs_review_count}</span>
+          <span class="col-counts">${log.new_count}</span>
           <span class="col-status"><span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${statusLabel}</span></span>
           <span class="col-detail">${escapeHtml(log.error_message || '')}</span>
         </div>`;

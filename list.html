@@ -37,6 +37,7 @@
   .tabs { display: flex; gap: 4px; padding: 4px; background: #E7E1D3; border-radius: 12px; flex-wrap: wrap; }
   .tabs button { min-height: 36px; padding: 0 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; background: transparent; color: var(--text-sub); }
   .tabs button.active { background: #211F1A; color: #FFFFFF; }
+  #card-filter { width: 180px; }
 
   .count { margin-left: auto; font-size: 13px; color: var(--text-muted); }
 
@@ -94,7 +95,7 @@
         <span class="month-label" id="month-label"></span>
         <button type="button" class="icon" id="next-month" aria-label="次の支払月">→</button>
       </div>
-      <div class="tabs" id="card-tabs"></div>
+      <select id="card-filter"></select>
       <div class="tabs" id="status-tabs"></div>
       <span class="count" id="row-count"></span>
     </div>
@@ -137,7 +138,7 @@
 
   const errorBanner = document.getElementById('error-banner');
   const monthLabel = document.getElementById('month-label');
-  const cardTabsEl = document.getElementById('card-tabs');
+  const cardFilterEl = document.getElementById('card-filter');
   const statusTabsEl = document.getElementById('status-tabs');
   const rowCountEl = document.getElementById('row-count');
   const loadingRow = document.getElementById('loading-row');
@@ -171,12 +172,10 @@
     const cardOptions = [{ id: 'all', label: 'すべて' }].concat(
       state.cards.map((c) => ({ id: c.id, label: c.name }))
     );
-    cardTabsEl.innerHTML = cardOptions.map((o) =>
-      `<button type="button" data-card-filter="${o.id}" class="${state.cardFilter === o.id ? 'active' : ''}">${escapeHtml(o.label)}</button>`
+    cardFilterEl.innerHTML = cardOptions.map((o) =>
+      `<option value="${o.id}" ${state.cardFilter === o.id ? 'selected' : ''}>${escapeHtml(o.label)}</option>`
     ).join('');
-    cardTabsEl.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', () => { state.cardFilter = btn.dataset.cardFilter; loadRows(); });
-    });
+    cardFilterEl.onchange = () => { state.cardFilter = cardFilterEl.value; loadRows(); };
 
     const statusOptions = [['all', 'すべて'], ['needs_review', '要確認'], ['confirmed', '確定']];
     statusTabsEl.innerHTML = statusOptions.map(([id, label]) =>

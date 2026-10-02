@@ -1,6 +1,11 @@
 // Supabase Edge Function: import-csv
 // Google Drive の「カード明細インポート/<カード名>/」フォルダにあるCSVを取り込み、
-// card_statements に source='auto', status='needs_review' として登録する。
+// card_statements に source='auto', status='confirmed' として登録する。
+// （以前は 'needs_review' をデフォルトにしていたが、取り込み結果は
+// 基本的に正しいため最初から確定済みとして扱い、必要なら list.html の
+// 「編集」から後で直せるようにする。マイナス金額や日付形式が想定外の行は
+// parseCsv() の時点で card_statements に登録されずスキップされ、
+// import_logs の error_message に要確認として記録される。）
 // 呼び出し方法は2通り:
 //   1. Supabase Cron（pg_cron + pg_net）から毎日1回、ヘッダー x-cron-secret 付きで呼ぶ
 //   2. アプリ画面（自動取得ログ）の「今すぐ実行」ボタンから、ログイン中ユーザーのJWT付きで呼ぶ
@@ -381,7 +386,7 @@ Deno.serve(async (req: Request) => {
               amount: r.amount,
               merchant: r.merchant,
               memo: r.memo,
-              status: "needs_review",
+              status: "confirmed",
               source: "auto",
               import_hash: await computeImportHash(card.id, r),
             })),
