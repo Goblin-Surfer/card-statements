@@ -38,6 +38,8 @@
   h2 { margin: 0; font-size: 16px; font-weight: 700; }
 
   label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text-sub); }
+  .field-checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text-sub); cursor: pointer; }
+  .field-checkbox input[type=checkbox] { width: 18px; height: 18px; accent-color: #0B6B57; cursor: pointer; }
   .field-row { display: flex; gap: 16px; }
   .field-row > label.field { flex: 1; }
 
@@ -179,6 +181,11 @@
           <button type="button" class="btn-mini" id="new-category-cancel">やめる</button>
         </div>
 
+        <label class="field-checkbox">
+          <input type="checkbox" id="f-shared">
+          清算対象にする（同居人・パートナーと割り勘する明細）
+        </label>
+
         <div class="preview-box">
           <span style="font-size:13px;font-weight:700;color:var(--text-sub);">支払月（自動計算）</span>
           <span class="value" id="preview-billing">カードと利用日を選択すると自動計算されます</span>
@@ -225,6 +232,7 @@
   const newCategoryAddBtn = document.getElementById('new-category-add');
   const newCategoryCancelBtn = document.getElementById('new-category-cancel');
   const memoInput = document.getElementById('f-memo');
+  const sharedCheckbox = document.getElementById('f-shared');
   const previewBilling = document.getElementById('preview-billing');
   const saveButton = document.getElementById('save-button');
   const saveStatus = document.getElementById('save-status');
@@ -336,7 +344,7 @@
         <div class="row">
           <span class="col-date">${dateLabel}</span>
           <span class="col-card"><span class="dot" style="background:${color};"></span>${escapeHtml(cardName)}</span>
-          <span class="col-merchant">${escapeHtml(r.merchant)}${r.memo ? '（' + escapeHtml(r.memo) + '）' : ''}</span>
+          <span class="col-merchant">${escapeHtml(r.merchant)}${r.memo ? '（' + escapeHtml(r.memo) + '）' : ''}${r.is_shared ? ' <span style="padding:2px 8px;background:#D7F0EC;color:#0B6B57;border-radius:10px;font-size:11px;font-weight:700;">清算対象</span>' : ''}</span>
           <span class="col-category">${escapeHtml(r.category || '')}</span>
           <span class="col-amount">${Number(r.amount).toLocaleString('ja-JP')}円</span>
           <span class="col-billing">${billingLabel}</span>
@@ -381,6 +389,7 @@
       merchant: merchantInput.value.trim(),
       category: categorySelect.value === '__new__' ? null : categorySelect.value,
       memo: memoInput.value.trim() || null,
+      is_shared: sharedCheckbox.checked,
       status: 'confirmed',
       source: 'manual'
     };
@@ -398,6 +407,7 @@
     amountInput.value = '';
     merchantInput.value = '';
     memoInput.value = '';
+    sharedCheckbox.checked = false;
     updateSaveEnabled();
 
     state.recent = [data].concat(state.recent).slice(0, 10);

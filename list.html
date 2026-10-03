@@ -65,6 +65,12 @@
   .pill-confirmed { background: #DDEFE3; color: #14513F; }
   .pill-category { background: #EEE3FB; color: #4B2E83; }
   .pill-ai { background: #DCEEFB; color: #1C5A8A; }
+  .pill-shared { background: #D7F0EC; color: #0B6B57; }
+
+  .chip-toggle { min-height: 36px; padding: 0 14px; border: 1.5px solid var(--border-light); border-radius: 18px; background: #FFFFFF; color: var(--text-sub); font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .chip-toggle.active { background: #0B6B57; color: #FFFFFF; border-color: #0B6B57; }
+
+  button.btn-mini.btn-shared-on { background: #D7F0EC; border-color: #3FA98C; color: #0B6B57; }
 
   button.btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; }
   button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
@@ -137,6 +143,7 @@
       </div>
       <select id="card-filter"></select>
       <div class="tabs" id="status-tabs"></div>
+      <button type="button" class="chip-toggle" id="shared-filter-toggle">清算対象のみ</button>
       <span class="count" id="row-count"></span>
     </div>
 
@@ -170,6 +177,7 @@
     month: today.getMonth() + 1, // 1-12
     cardFilter: 'all',
     statusFilter: 'all',
+    sharedOnly: false,
     rows: [],
     loading: true,
     editingIds: new Set(),
@@ -180,6 +188,7 @@
   const monthLabel = document.getElementById('month-label');
   const cardFilterEl = document.getElementById('card-filter');
   const statusTabsEl = document.getElementById('status-tabs');
+  const sharedFilterToggle = document.getElementById('shared-filter-toggle');
   const rowCountEl = document.getElementById('row-count');
   const loadingRow = document.getElementById('loading-row');
   const rowsEl = document.getElementById('rows');
@@ -242,7 +251,14 @@
   function renderRows() {
     loadingRow.classList.toggle('hidden', !state.loading);
     emptyEl.classList.toggle('hidden', state.loading || state.rows.length > 0);
-    rowCountEl.textContent = state.loading ? '' : state.rows.length + '件';
+    if (state.loading) {
+      rowCountEl.textContent = '';
+    } else if (state.sharedOnly) {
+      const total = state.rows.reduce((sum, r) => sum + Number(r.amount), 0);
+      rowCountEl.textContent = state.rows.length + '件・合計 ' + total.toLocaleString('ja-JP') + '円';
+    } else {
+      rowCountEl.textContent = state.rows.length + '件';
+    }
 
     rowsEl.innerHTML = state.rows.map((r) => {
       const meta = cardMeta(r.card_id);
@@ -297,6 +313,10 @@
 
       const rowClass = needsReview ? 'needs-review' : ((needsCategory || needsAiConfirm) ? 'needs-category' : '');
 
+      const sharedBtn = r.is_shared
+        ? `<button type="button" class="btn-mini btn-shared-on" data-action="toggle-shared" data-id="${r.id}">✓ 清算対象</button>`
+        : `<button type="button" class="btn-mini" data-action="toggle-shared" data-id="${r.id}">清算対象にする</button>`;
+
       return `
         <div class="row ${rowClass}" data-row-id="${r.id}">
           <span class="col-date">${dateLabel}</span>
@@ -308,6 +328,7 @@
           <span class="col-status">
             ${categoryBadge}
             <span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${pillLabel}</span>
+            ${sharedBtn}
             ${actionCell}
           </span>
         </div>`;
@@ -362,6 +383,9 @@
     rowsEl.querySelectorAll('[data-action="confirm"]').forEach((btn) => {
       btn.addEventListener('click', () => confirmRow(btn.dataset.id));
     });
+    rowsEl.querySelectorAll('[data-action="toggle-shared"]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleShared(btn.dataset.id));
+    });
     rowsEl.querySelectorAll('[data-action="edit"]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.id;
@@ -413,6 +437,23 @@
 
   async function confirmRow(id) {
     await saveRow(id, true);
+  }
+
+  async function toggleShared(id) {
+    const row = state.rows.find((r) => r.id === id);
+    if (!row) return;
+    const next = !row.is_shared;
+    row.is_shared = next;
+    renderRows();
+    const { error } = await supabaseClient.from('card_statements').update({ is_shared: next }).eq('id', id);
+    if (error) {
+      row.is_shared = !next;
+      showError('更新エラー: ' + error.message);
+      renderRows();
+    } else if (state.sharedOnly) {
+      // 清算対象フィルタ表示中にオフにした場合は一覧から外す
+      await loadRows();
+    }
   }
 
   async function saveRow(id, confirm) {
@@ -467,6 +508,7 @@
 
     if (state.cardFilter !== 'all') query = query.eq('card_id', state.cardFilter);
     if (state.statusFilter !== 'all') query = query.eq('status', state.statusFilter);
+    if (state.sharedOnly) query = query.eq('is_shared', true);
 
     const { data, error } = await query;
     state.loading = false;
@@ -480,6 +522,12 @@
     }
     renderRows();
   }
+
+  sharedFilterToggle.addEventListener('click', () => {
+    state.sharedOnly = !state.sharedOnly;
+    sharedFilterToggle.classList.toggle('active', state.sharedOnly);
+    loadRows();
+  });
 
   document.getElementById('prev-month').addEventListener('click', () => {
     state.month -= 1;

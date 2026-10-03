@@ -94,6 +94,22 @@
   .insight-line { font-size: 14px; line-height: 1.7; color: var(--text-sub); margin: 0 0 10px; }
   .insight-line:last-child { margin-bottom: 0; }
 
+  .hero-sub-stat { margin: 4px 0 0; font-size: 13px; color: var(--text-sub); }
+
+  .fixed-summary { display: flex; gap: 12px; flex-wrap: wrap; }
+  .fixed-tile { flex: 1; min-width: 130px; box-sizing: border-box; padding: 12px 16px; background: var(--bg); border-radius: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .fixed-tile .name { font-size: 13px; font-weight: 700; color: var(--text-sub); }
+  .fixed-tile .amount { font-size: 20px; font-weight: 700; }
+  .fixed-tile.total { background: #EAF1FB; }
+  .fixed-tile.total .amount { color: #1F4E8C; }
+  .fixed-ratio-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 14px; background: #EAF1FB; color: #1F4E8C; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .fixed-item-list { display: flex; flex-direction: column; }
+  .fixed-item-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid #ECE6D8; font-size: 14px; }
+  .fixed-item-row:first-child { border-top: none; }
+  .fixed-item-row .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .fixed-diff-note { margin: 0 0 6px; font-size: 13px; line-height: 1.6; color: var(--text-sub); }
+  .fixed-diff-note:last-child { margin-bottom: 0; }
+
   .notice { box-sizing: border-box; padding: 14px 16px; background: #EAF1FB; border: 1px solid #CBDFF5; border-radius: 10px; font-size: 13px; line-height: 1.6; color: #1F4E8C; }
   .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
   .empty { padding: 24px 4px; text-align: center; font-size: 13px; color: var(--text-muted); }
@@ -122,6 +138,11 @@
     .hero-main .value { font-size: 30px; }
     .hero-cards { gap: 8px; }
     .hero-card { min-width: 120px; }
+
+    .fixed-summary { gap: 8px; }
+    .fixed-tile { min-width: 100px; padding: 10px 12px; }
+    .fixed-tile .amount { font-size: 17px; }
+    .panel-head { align-items: center; }
 
     .chart-wrap { margin-left: 34px; }
     .chart-ticks span { left: -34px; width: 30px; font-size: 10px; }
@@ -168,10 +189,25 @@
             <span class="unit">円</span>
           </div>
           <span class="delta" id="hero-delta"></span>
+          <p class="hero-sub-stat" id="hero-shared"></p>
         </div>
         <div class="hero-divider"></div>
         <div class="hero-cards" id="hero-cards"></div>
       </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>固定費・インフラ費用</h2>
+          <div class="sub" id="fixed-sub"></div>
+        </div>
+        <span class="fixed-ratio-badge" id="fixed-ratio-badge"></span>
+      </div>
+      <div class="fixed-summary" id="fixed-summary"></div>
+      <div class="fixed-item-list" id="fixed-item-list"></div>
+      <div id="fixed-empty" class="empty hidden">この月は固定費に分類された明細がありません。</div>
+      <div id="fixed-diff-notes"></div>
     </section>
 
     <div class="cols">
@@ -298,7 +334,7 @@
 
     const { data, error } = await supabaseClient
       .from('card_statements')
-      .select('billing_month, card_id, amount, merchant, category')
+      .select('billing_month, card_id, amount, merchant, category, is_shared')
       .eq('status', 'confirmed')
       .gte('billing_month', startIso)
       .lte('billing_month', endIso);
@@ -318,14 +354,20 @@
       const rowsInMonth = data.filter((r) => r.billing_month === key);
       const byCard = {};
       const categories = {};
+      const merchantsByCategory = {};
       let total = 0;
+      let sharedTotal = 0;
+      let sharedCount = 0;
       rowsInMonth.forEach((r) => {
         byCard[r.card_id] = (byCard[r.card_id] || 0) + Number(r.amount);
         const categoryKey = r.category || '未分類';
         categories[categoryKey] = (categories[categoryKey] || 0) + Number(r.amount);
+        if (!merchantsByCategory[categoryKey]) merchantsByCategory[categoryKey] = {};
+        merchantsByCategory[categoryKey][r.merchant] = (merchantsByCategory[categoryKey][r.merchant] || 0) + Number(r.amount);
         total += Number(r.amount);
+        if (r.is_shared) { sharedTotal += Number(r.amount); sharedCount += 1; }
       });
-      return { ...m, total, byCard, categories };
+      return { ...m, total, byCard, categories, merchantsByCategory, sharedTotal, sharedCount };
     });
 
     renderAll();
@@ -343,10 +385,64 @@
     document.getElementById('hero').classList.remove('hidden');
 
     renderHero();
+    renderFixed();
     renderTrend();
     renderByCard();
     renderCategories();
     renderInsights();
+  }
+
+  const FIXED_CATEGORIES = ['固定費', '水道光熱', '通信'];
+
+  function renderFixed() {
+    const cur = currentMonthData();
+    const prev = prevMonthData();
+    if (!cur) return;
+
+    document.getElementById('fixed-sub').textContent = state.year + '年' + state.month + '月支払分';
+
+    const fixedTotal = FIXED_CATEGORIES.reduce((sum, name) => sum + (cur.categories[name] || 0), 0);
+    const ratio = cur.total > 0 ? Math.round((fixedTotal / cur.total) * 100) : 0;
+    document.getElementById('fixed-ratio-badge').textContent = '支出全体の ' + ratio + '%';
+
+    const tiles = FIXED_CATEGORIES.map((name) => {
+      const v = cur.categories[name] || 0;
+      return `
+        <div class="fixed-tile">
+          <span class="name">${escapeHtml(name)}</span>
+          <span class="amount">${fmt(v)}<span style="margin-left:2px;font-size:12px;font-weight:500;color:var(--text-sub);">円</span></span>
+        </div>`;
+    }).join('');
+    const totalTile = `
+        <div class="fixed-tile total">
+          <span class="name">3カテゴリ合計</span>
+          <span class="amount">${fmt(fixedTotal)}<span style="margin-left:2px;font-size:12px;font-weight:500;color:var(--text-sub);">円</span></span>
+        </div>`;
+    document.getElementById('fixed-summary').innerHTML = tiles + totalTile;
+
+    const items = Object.entries(cur.merchantsByCategory['固定費'] || {}).sort((a, b) => b[1] - a[1]);
+    document.getElementById('fixed-empty').classList.toggle('hidden', items.length > 0);
+    document.getElementById('fixed-item-list').innerHTML = items.map(([name, v]) =>
+      `<div class="fixed-item-row"><span>${escapeHtml(name)}</span><span class="amount">${fmt(v)}円</span></div>`
+    ).join('');
+
+    const diffEl = document.getElementById('fixed-diff-notes');
+    if (prev) {
+      const curNames = new Set(Object.keys(cur.merchantsByCategory['固定費'] || {}));
+      const prevNames = new Set(Object.keys(prev.merchantsByCategory['固定費'] || {}));
+      const added = [...curNames].filter((n) => !prevNames.has(n));
+      const removed = [...prevNames].filter((n) => !curNames.has(n));
+      const lines = [];
+      if (added.length) {
+        lines.push('先月までなかった固定費: ' + added.map((n) => escapeHtml(n)).join('、'));
+      }
+      if (removed.length) {
+        lines.push('先月まであった固定費が今月は見当たりません: ' + removed.map((n) => escapeHtml(n)).join('、') + '（解約済みか確認してみてください）');
+      }
+      diffEl.innerHTML = lines.map((l) => `<p class="fixed-diff-note">${l}</p>`).join('');
+    } else {
+      diffEl.innerHTML = '';
+    }
   }
 
   function currentMonthData() {
@@ -378,6 +474,14 @@
     } else {
       deltaEl.textContent = '前月データなし';
       deltaEl.style.color = 'var(--text-muted)';
+    }
+
+    const sharedEl = document.getElementById('hero-shared');
+    if (cur.sharedTotal > 0) {
+      const net = cur.total - cur.sharedTotal;
+      sharedEl.textContent = 'うち清算対象 ' + fmt(cur.sharedTotal) + '円（' + cur.sharedCount + '件）／ 実質の自己負担 ' + fmt(net) + '円';
+    } else {
+      sharedEl.textContent = '';
     }
 
     document.getElementById('hero-cards').innerHTML = state.cards.map((c, idx) => {
