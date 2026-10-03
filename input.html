@@ -63,6 +63,11 @@
   .status-msg.ok { background: #DDEFE3; color: #14513F; }
   .status-msg.error { background: var(--error-bg); color: var(--error-text); }
 
+  .new-cat-inline { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+  .new-cat-inline input[type=text] { flex: 1; min-width: 0; }
+  button.btn-mini { min-height: 32px; padding: 0 10px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  button.btn-mini.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
+
   .row { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-top: 1px solid #ECE6D8; flex-wrap: wrap; font-size: 13px; }
   .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-weight: 700; color: var(--text-muted); font-size: 12px; }
   .col-date { width: 56px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
@@ -138,6 +143,12 @@
           </label>
         </div>
 
+        <div class="new-cat-inline hidden" id="new-category-box">
+          <input type="text" id="f-new-category-name" placeholder="新しいカテゴリ名">
+          <button type="button" class="btn-mini btn-primary" id="new-category-add">追加</button>
+          <button type="button" class="btn-mini" id="new-category-cancel">やめる</button>
+        </div>
+
         <div class="preview-box">
           <span style="font-size:13px;font-weight:700;color:var(--text-sub);">支払月（自動計算）</span>
           <span class="value" id="preview-billing">カードと利用日を選択すると自動計算されます</span>
@@ -169,10 +180,9 @@
   </main>
 
 <script>
-  const CATS = ['食費', '日用品', '水道光熱', '通信', '交通費', 'その他'];
   const PALETTE = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#4A3AA7', '#E34948'];
 
-  const state = { session: null, cards: [], recent: [] };
+  const state = { session: null, cards: [], recent: [], categories: [] };
 
   const cardSelect = document.getElementById('f-card');
   const cardDot = document.getElementById('card-dot');
@@ -180,6 +190,10 @@
   const amountInput = document.getElementById('f-amount');
   const merchantInput = document.getElementById('f-merchant');
   const categorySelect = document.getElementById('f-category');
+  const newCategoryBox = document.getElementById('new-category-box');
+  const newCategoryNameInput = document.getElementById('f-new-category-name');
+  const newCategoryAddBtn = document.getElementById('new-category-add');
+  const newCategoryCancelBtn = document.getElementById('new-category-cancel');
   const memoInput = document.getElementById('f-memo');
   const previewBilling = document.getElementById('preview-billing');
   const saveButton = document.getElementById('save-button');
@@ -233,9 +247,50 @@
     updatePreview();
   }
 
-  function renderCategoryOptions() {
-    categorySelect.innerHTML = CATS.map((c) => `<option value="${c}">${c}</option>`).join('');
+  function renderCategoryOptions(preferredName) {
+    const catOptions = state.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+    const newOption = `<option value="__new__">＋ 新しいカテゴリを追加</option>`;
+    categorySelect.innerHTML = catOptions + newOption;
+    if (preferredName) categorySelect.value = preferredName;
   }
+
+  async function loadCategories() {
+    try {
+      state.categories = await fetchCategories();
+    } catch (e) {
+      showStatus('カテゴリ読み込みエラー: ' + e.message, 'error');
+    }
+    renderCategoryOptions();
+  }
+
+  categorySelect.addEventListener('change', () => {
+    if (categorySelect.value === '__new__') {
+      newCategoryBox.classList.remove('hidden');
+      newCategoryNameInput.value = '';
+      newCategoryNameInput.focus();
+    } else {
+      newCategoryBox.classList.add('hidden');
+    }
+  });
+
+  newCategoryAddBtn.addEventListener('click', async () => {
+    const name = newCategoryNameInput.value.trim();
+    if (!name) return;
+    const { data, error } = await createCategory(name);
+    if (error) { showStatus('カテゴリ追加エラー: ' + error.message, 'error'); return; }
+    if (!state.categories.some((c) => c.id === data.id)) {
+      state.categories.push(data);
+      state.categories.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name, 'ja'));
+    }
+    renderCategoryOptions(data.name);
+    newCategoryBox.classList.add('hidden');
+    showStatus(null);
+  });
+
+  newCategoryCancelBtn.addEventListener('click', () => {
+    newCategoryBox.classList.add('hidden');
+    renderCategoryOptions(state.categories[0] ? state.categories[0].name : '');
+  });
 
   function renderRecent() {
     recentEmptyEl.classList.toggle('hidden', state.recent.length > 0);
@@ -294,7 +349,7 @@
       used_date: dateInput.value,
       amount: Number(amountInput.value),
       merchant: merchantInput.value.trim(),
-      category: categorySelect.value,
+      category: categorySelect.value === '__new__' ? null : categorySelect.value,
       memo: memoInput.value.trim() || null,
       status: 'confirmed',
       source: 'manual'
@@ -328,7 +383,7 @@
     const session = await requireAuth();
     if (!session) return;
     state.session = session;
-    renderCategoryOptions();
+    await loadCategories();
     await loadCards();
     await loadRecent();
   })();

@@ -72,6 +72,11 @@
   .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
   .empty { padding: 40px 20px; text-align: center; font-size: 14px; color: var(--text-muted); }
   .hidden { display: none !important; }
+
+  .new-cat-inline { display: flex; gap: 4px; align-items: center; }
+  .new-cat-inline input[type=text] { flex: 1; min-width: 0; }
+  button.btn-mini { min-height: 32px; padding: 0 8px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 11px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  button.btn-mini.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -123,13 +128,13 @@
   </main>
 
 <script>
-  const CATS = ['食費', '日用品', '水道光熱', '通信', '交通費', 'その他'];
   const PALETTE = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#4A3AA7', '#E34948'];
 
   const today = new Date();
   const state = {
     session: null,
     cards: [],
+    categories: [],
     year: today.getFullYear(),
     month: today.getMonth() + 1, // 1-12
     cardFilter: 'all',
@@ -196,7 +201,11 @@
 
   function categoryOptionsHtml(selected) {
     const emptyOption = `<option value="" ${selected ? '' : 'selected'}>(未設定)</option>`;
-    return emptyOption + CATS.map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
+    const catOptions = state.categories.map((c) =>
+      `<option value="${escapeHtml(c.name)}" ${c.name === selected ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+    ).join('');
+    const newOption = `<option value="__new__">＋ 新しいカテゴリを追加</option>`;
+    return emptyOption + catOptions + newOption;
   }
 
   function renderRows() {
@@ -214,9 +223,19 @@
 
       const dateLabel = r.used_date.slice(5).replace('-', '/');
 
-      const categoryCell = editing
-        ? `<select data-field="category" data-id="${r.id}">${categoryOptionsHtml(edit.category)}</select>`
-        : `<span>${escapeHtml(r.category || '')}</span>`;
+      let categoryCell;
+      if (editing && edit.creatingCategory) {
+        categoryCell = `
+          <div class="new-cat-inline">
+            <input type="text" data-field="new-category" data-id="${r.id}" placeholder="新しいカテゴリ名" value="${escapeHtml(edit.newCategoryName || '')}">
+            <button type="button" class="btn-mini btn-primary" data-action="add-category" data-id="${r.id}">追加</button>
+            <button type="button" class="btn-mini" data-action="cancel-category" data-id="${r.id}">やめる</button>
+          </div>`;
+      } else if (editing) {
+        categoryCell = `<select data-field="category" data-id="${r.id}">${categoryOptionsHtml(edit.category)}</select>`;
+      } else {
+        categoryCell = `<span>${escapeHtml(r.category || '')}</span>`;
+      }
 
       const memoCell = editing
         ? `<input type="text" data-field="memo" data-id="${r.id}" value="${escapeHtml(edit.memo)}" placeholder="メモを追加">`
@@ -266,17 +285,49 @@
     bindRowEvents();
   }
 
+  function editsFor(id) {
+    const row = state.rows.find((r) => r.id === id);
+    const current = state.edits[id] || { category: row.category || '', memo: row.memo || '' };
+    state.edits[id] = current;
+    return current;
+  }
+
   function bindRowEvents() {
-    rowsEl.querySelectorAll('[data-field]').forEach((input) => {
+    rowsEl.querySelectorAll('[data-field="memo"]').forEach((input) => {
       input.addEventListener('input', () => {
-        const id = input.dataset.id;
-        const field = input.dataset.field;
-        const row = state.rows.find((r) => r.id === id);
-        const current = state.edits[id] || { category: row.category || '', memo: row.memo || '' };
-        current[field] = input.value;
-        state.edits[id] = current;
+        editsFor(input.dataset.id).memo = input.value;
       });
     });
+
+    rowsEl.querySelectorAll('select[data-field="category"]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const current = editsFor(sel.dataset.id);
+        if (sel.value === '__new__') {
+          current.creatingCategory = true;
+          current.newCategoryName = '';
+        } else {
+          current.category = sel.value;
+        }
+        renderRows();
+      });
+    });
+
+    rowsEl.querySelectorAll('[data-field="new-category"]').forEach((input) => {
+      input.addEventListener('input', () => {
+        editsFor(input.dataset.id).newCategoryName = input.value;
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); addNewCategory(input.dataset.id); }
+        if (e.key === 'Escape') { e.preventDefault(); cancelNewCategory(input.dataset.id); }
+      });
+    });
+    rowsEl.querySelectorAll('[data-action="add-category"]').forEach((btn) => {
+      btn.addEventListener('click', () => addNewCategory(btn.dataset.id));
+    });
+    rowsEl.querySelectorAll('[data-action="cancel-category"]').forEach((btn) => {
+      btn.addEventListener('click', () => cancelNewCategory(btn.dataset.id));
+    });
+
     rowsEl.querySelectorAll('[data-action="confirm"]').forEach((btn) => {
       btn.addEventListener('click', () => confirmRow(btn.dataset.id));
     });
@@ -299,6 +350,34 @@
     rowsEl.querySelectorAll('[data-action="save"]').forEach((btn) => {
       btn.addEventListener('click', () => saveRow(btn.dataset.id, false));
     });
+  }
+
+  async function addNewCategory(id) {
+    const current = state.edits[id];
+    if (!current) return;
+    const name = (current.newCategoryName || '').trim();
+    if (!name) return;
+
+    const { data, error } = await createCategory(name);
+    if (error) { showError('カテゴリ追加エラー: ' + error.message); return; }
+
+    if (!state.categories.some((cat) => cat.id === data.id)) {
+      state.categories.push(data);
+      state.categories.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name, 'ja'));
+    }
+    showError(null);
+    current.category = data.name;
+    current.creatingCategory = false;
+    current.newCategoryName = '';
+    renderRows();
+  }
+
+  function cancelNewCategory(id) {
+    const current = state.edits[id];
+    if (!current) return;
+    current.creatingCategory = false;
+    current.newCategoryName = '';
+    renderRows();
   }
 
   async function confirmRow(id) {
@@ -382,11 +461,20 @@
     loadRows();
   });
 
+  async function loadCategories() {
+    try {
+      state.categories = await fetchCategories();
+    } catch (e) {
+      showError('カテゴリ読み込みエラー: ' + e.message);
+    }
+  }
+
   (async () => {
     const session = await requireAuth();
     if (!session) return;
     state.session = session;
     await loadCards();
+    await loadCategories();
     await loadRows();
   })();
 </script>

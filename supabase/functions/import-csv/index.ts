@@ -335,9 +335,6 @@ function resolveCategory(
   return { category: matches[0].category_name, source: matches[0].source };
 }
 
-// list.html の CATS と必ず同じ内容にすること（手入力・一覧の分類と食い違わないように）
-const CATEGORY_LIST = ["食費", "日用品", "水道光熱", "通信", "交通費", "その他"];
-
 // ---------------------------------------------------------------------------
 // カテゴリ自動分類（AI判定・任意機能）
 // merchant_categories に一致するルールが無い「初めての利用先」だけ、
@@ -346,14 +343,16 @@ const CATEGORY_LIST = ["食費", "日用品", "水道光熱", "通信", "交通�
 // APIキー未設定・通信エラー・タイムアウトなど何が起きても例外を投げず、
 // 常にnullにフォールバックして取込全体を止めないようにする。
 // ---------------------------------------------------------------------------
-async function classifyWithAI(merchant: string): Promise<string | null> {
+async function classifyWithAI(merchant: string, categoryList: string[]): Promise<string | null> {
   if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) return null;
+  // そのユーザーがまだ一つもカテゴリを作っていない場合はAIに選ばせようがないので呼ばない
+  if (categoryList.length === 0) return null;
 
   const prompt = `あなたは日本のクレジットカード利用明細を分類するアシスタントです。
 次のカテゴリ一覧から最も当てはまるものを一つだけ選び、そのカテゴリ名だけを1行で出力してください。
 説明や記号は付けないでください。自信を持って判断できない場合は「不明」と出力してください。
 
-カテゴリ一覧: ${CATEGORY_LIST.join(", ")}
+カテゴリ一覧: ${categoryList.join(", ")}
 
 利用先: ${merchant}
 
@@ -379,7 +378,7 @@ async function classifyWithAI(merchant: string): Promise<string | null> {
     const raw = String(body?.result?.response ?? "").trim();
     // モデルが指示通り1行だけ返すとは限らないので、1行目だけを見て判定する
     const firstLine = raw.split(/\r?\n/)[0].trim().replace(/^[「"']|[」"']$/g, "");
-    return CATEGORY_LIST.includes(firstLine) ? firstLine : null;
+    return categoryList.includes(firstLine) ? firstLine : null;
   } catch (e) {
     console.error("Cloudflare Workers AI call failed:", errorMessage(e));
     return null;
@@ -426,14 +425,17 @@ Deno.serve(async (req: Request) => {
       { data: cards, error: cardsErr },
       { data: profiles, error: profilesErr },
       { data: categoryRuleRows, error: categoryRulesErr },
+      { data: categoryRows, error: categoriesErr },
     ] = await Promise.all([
       admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
       admin.from("csv_import_profiles").select("*"),
       admin.from("merchant_categories").select("user_id, keyword, category_name, priority, source"),
+      admin.from("categories").select("user_id, name, sort_order").order("sort_order", { ascending: true }),
     ]);
     if (cardsErr) throw cardsErr;
     if (profilesErr) throw profilesErr;
     if (categoryRulesErr) throw categoryRulesErr;
+    if (categoriesErr) throw categoriesErr;
 
     const profileByIssuer = new Map<string, Profile>(
       (profiles ?? []).map((p: Profile) => [p.issuer, p]),
@@ -445,6 +447,14 @@ Deno.serve(async (req: Request) => {
       const list = categoryRulesByUser.get(r.user_id) ?? [];
       list.push({ keyword: r.keyword, category_name: r.category_name, priority: r.priority, source: r.source ?? "human" });
       categoryRulesByUser.set(r.user_id, list);
+    }
+
+    // user_id ごとに「その人が作ったカテゴリ名の一覧」をまとめておく（AI判定の選択肢・検証に使う）
+    const categoryListByUser = new Map<string, string[]>();
+    for (const r of categoryRows ?? []) {
+      const list = categoryListByUser.get(r.user_id) ?? [];
+      list.push(r.name);
+      categoryListByUser.set(r.user_id, list);
     }
 
     const summary: Record<string, unknown>[] = [];
@@ -504,7 +514,7 @@ Deno.serve(async (req: Request) => {
 
             // 2. 一致しない「初めての利用先」だけ、Cloudflare Workers AIに判定してもらう
             if (!category) {
-              const aiCategory = await classifyWithAI(r.merchant);
+              const aiCategory = await classifyWithAI(r.merchant, categoryListByUser.get(card.user_id) ?? []);
               if (aiCategory) {
                 category = aiCategory;
                 categorySource = "ai";
