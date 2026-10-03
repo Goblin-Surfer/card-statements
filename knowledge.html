@@ -35,6 +35,7 @@
   .tabs button { min-height: 36px; padding: 0 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; background: transparent; color: var(--text-sub); }
   .tabs button.active { background: #211F1A; color: #FFFFFF; }
   #search-input { width: 220px; }
+  #category-filter { width: 160px; }
   .count { margin-left: auto; font-size: 13px; color: var(--text-muted); }
 
   section.panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
@@ -96,6 +97,7 @@
 
     <div class="toolbar">
       <input type="text" id="search-input" placeholder="利用先キーワードで検索">
+      <select id="category-filter"></select>
       <div class="tabs" id="source-tabs"></div>
       <span class="count" id="row-count"></span>
     </div>
@@ -150,6 +152,7 @@
     categories: [],
     search: '',
     sourceFilter: 'all',
+    categoryFilter: 'all',
     loading: true,
     saveState: {}, // id -> 'saving' | 'ok' | 'err'
     creatingCategoryFor: null, // rule id currently showing the inline 新規カテゴリ入力
@@ -162,6 +165,7 @@
   const errorBanner = document.getElementById('error-banner');
   const searchInput = document.getElementById('search-input');
   const sourceTabsEl = document.getElementById('source-tabs');
+  const categoryFilterEl = document.getElementById('category-filter');
   const rowCountEl = document.getElementById('row-count');
   const loadingRow = document.getElementById('loading-row');
   const rowsEl = document.getElementById('rows');
@@ -186,6 +190,20 @@
     return catOptions + newOption;
   }
 
+  // カテゴリ管理パネルの一覧が変わるたびに呼び、ここでの選択肢も最新に保つ。
+  // 選択中のカテゴリが名前変更・統合・削除で無くなっていたら「すべてのカテゴリ」に戻す。
+  function renderCategoryFilterOptions() {
+    if (state.categoryFilter !== 'all' && !state.categories.some((c) => c.name === state.categoryFilter)) {
+      state.categoryFilter = 'all';
+    }
+    const allOption = `<option value="all">すべてのカテゴリ</option>`;
+    const catOptions = state.categories.map((c) =>
+      `<option value="${escapeHtml(c.name)}" ${c.name === state.categoryFilter ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+    ).join('');
+    categoryFilterEl.innerHTML = allOption + catOptions;
+    categoryFilterEl.value = state.categoryFilter;
+  }
+
   function renderTabs() {
     const options = [['all', 'すべて'], ['ai', 'AI推定（要確認）'], ['human', '確定済み']];
     sourceTabsEl.innerHTML = options.map(([id, label]) =>
@@ -200,6 +218,7 @@
     const q = state.search.trim();
     return state.rules.filter((r) => {
       if (state.sourceFilter !== 'all' && r.source !== state.sourceFilter) return false;
+      if (state.categoryFilter !== 'all' && r.category_name !== state.categoryFilter) return false;
       if (q && !r.keyword.includes(q)) return false;
       return true;
     });
@@ -278,6 +297,7 @@
     if (!state.categories.some((c) => c.id === data.id)) {
       state.categories.push(data);
       state.categories.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name, 'ja'));
+      renderCategoryFilterOptions();
     }
     state.creatingCategoryFor = null;
     state.newCategoryDraftName = '';
@@ -376,6 +396,7 @@
         </div>`;
     }).join('');
     bindCategoryPanelEvents();
+    renderCategoryFilterOptions();
   }
 
   function bindCategoryPanelEvents() {
@@ -567,6 +588,11 @@
     }, 150);
   });
 
+  categoryFilterEl.addEventListener('change', () => {
+    state.categoryFilter = categoryFilterEl.value;
+    renderRows();
+  });
+
   // --- ナレッジの一括再適用 ---
   // すでに取り込み済みの明細のうち、人間がまだ確認していないもの（category_source が
   // 'human' ではないもの＝未設定 or 'ai'）だけを対象に、今の merchant_categories ルールで
@@ -648,6 +674,7 @@
     if (!session) return;
     state.session = session;
     await loadCategories();
+    renderCategoryFilterOptions();
     await loadRules();
   })();
 </script>
