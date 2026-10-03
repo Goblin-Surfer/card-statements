@@ -78,6 +78,10 @@
   .bar-groups { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; align-items: flex-end; }
   .bar-group { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 3px; border: none; background: transparent; cursor: pointer; padding: 0; position: relative; }
   .bar-group.active { background: #F0EADB; }
+  .bar-group.hovered .dot { box-shadow: 0 0 0 5px rgba(42,120,214,0.22); }
+  .chart-tooltip { position: absolute; transform: translate(-50%, calc(-100% - 10px)); background: var(--text); color: #FFFFFF; font-size: 12px; font-weight: 600; padding: 5px 9px; border-radius: 6px; white-space: nowrap; pointer-events: none; z-index: 5; box-shadow: 0 2px 6px rgba(0,0,0,0.18); }
+  .chart-tooltip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: var(--text); }
+  .chart-tooltip.hidden { display: none; }
   .bar { display: block; width: 16px; border-radius: 4px 4px 0 0; }
 
   table.month-table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -219,7 +223,7 @@
           <div class="panel-head">
             <div>
               <h2>全カード合計の推移</h2>
-              <div class="sub">直近6か月・支払月をクリックで切り替え</div>
+              <div class="sub">直近6か月・ホバーで金額表示、クリックでその月に切り替え</div>
             </div>
             <button type="button" class="toggle-btn" id="trend-toggle">表で見る</button>
           </div>
@@ -231,6 +235,7 @@
                 <polyline id="trend-line" fill="none" stroke="#2A78D6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></polyline>
               </svg>
               <div class="bar-groups" id="trend-groups"></div>
+              <div class="chart-tooltip hidden" id="trend-tooltip"></div>
             </div>
             <div class="chart-labels" id="trend-labels"></div>
           </div>
@@ -521,22 +526,45 @@
           <span class="dot" style="position:absolute;left:50%;bottom:${dotBottom}px;transform:translate(-50%,50%);background:#2A78D6;border:2px solid #FFFFFF;"></span>
         </button>`;
     }).join('');
+
+    function paintTrendReadout(m) {
+      document.getElementById('trend-readout').innerHTML = m
+        ? `<span style="font-weight:700;color:var(--text);">${m.year}年${m.month}月支払分</span> 合計 <strong>${fmt(m.total)}円</strong>`
+        : '';
+    }
+    const trendTooltip = document.getElementById('trend-tooltip');
+    function showTrendTooltip(btn, m) {
+      const wrapRect = document.querySelector('#trend-chart-view .chart-wrap').getBoundingClientRect();
+      const dotRect = btn.querySelector('.dot').getBoundingClientRect();
+      trendTooltip.style.left = Math.round(dotRect.left + dotRect.width / 2 - wrapRect.left) + 'px';
+      trendTooltip.style.bottom = Math.round(wrapRect.bottom - dotRect.top + 10) + 'px';
+      trendTooltip.textContent = m.month + '月支払 ' + fmt(m.total) + '円';
+      trendTooltip.classList.remove('hidden');
+      btn.classList.add('hovered');
+      paintTrendReadout(m);
+    }
+    function hideTrendTooltip(btn) {
+      trendTooltip.classList.add('hidden');
+      btn.classList.remove('hovered');
+      paintTrendReadout(currentMonthData());
+    }
     document.querySelectorAll('#trend-groups [data-month-index]').forEach((btn) => {
+      const m = state.monthsData[Number(btn.dataset.monthIndex)];
       btn.addEventListener('click', () => {
-        const m = state.monthsData[Number(btn.dataset.monthIndex)];
         state.year = m.year; state.month = m.month;
         loadWindowData();
       });
+      btn.addEventListener('pointerenter', () => showTrendTooltip(btn, m));
+      btn.addEventListener('pointerleave', () => hideTrendTooltip(btn));
+      btn.addEventListener('focus', () => showTrendTooltip(btn, m));
+      btn.addEventListener('blur', () => hideTrendTooltip(btn));
     });
 
     document.getElementById('trend-labels').innerHTML = state.monthsData.map((m, i) =>
       `<span class="${i === state.monthsData.length - 1 ? 'active' : ''}">${m.month}月</span>`
     ).join('');
 
-    const cur = currentMonthData();
-    document.getElementById('trend-readout').innerHTML = cur
-      ? `<span style="font-weight:700;color:var(--text);">${cur.year}年${cur.month}月支払分</span> 合計 <strong>${fmt(cur.total)}円</strong>`
-      : '';
+    paintTrendReadout(currentMonthData());
 
     document.getElementById('trend-table-body').innerHTML = state.monthsData.map((m, i) =>
       `<tr><td style="${i === state.monthsData.length - 1 ? 'font-weight:700;' : ''}">${m.month}月</td><td class="num">${fmt(m.total)}</td></tr>`
