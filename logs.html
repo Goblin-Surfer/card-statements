@@ -63,6 +63,32 @@
 
   .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); border-top-color: #FFFFFF; display: inline-block; animation: spin 0.7s linear infinite; margin-right: 8px; vertical-align: -2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== モバイル対応 ===== */
+  @media (max-width: 680px) {
+    header { height: auto; min-height: 56px; padding: 8px 14px; flex-wrap: nowrap; }
+    header .brand { font-size: 15px; margin-right: 10px; flex-shrink: 0; }
+    nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav a { height: 40px; padding: 0 10px; font-size: 13px; }
+
+    main { padding: 16px 12px 40px; gap: 12px; }
+    h1 { font-size: 19px; }
+
+    .toolbar { flex-wrap: wrap; }
+    .count { margin-left: 0; }
+
+    .row.head { display: none; }
+    #rows .row, #loading-row.row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      padding: 14px 16px;
+    }
+    #rows .row > *, #loading-row.row > * { width: 100%; flex: none; }
+    .col-time { order: -1; font-size: 12px; }
+    .col-detail { font-size: 12px; }
+  }
 </style>
 </head>
 <body>

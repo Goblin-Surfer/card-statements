@@ -74,6 +74,39 @@
 
   .reapply-panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
   .reapply-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+  /* ===== モバイル対応 ===== */
+  @media (max-width: 680px) {
+    header { height: auto; min-height: 56px; padding: 8px 14px; flex-wrap: nowrap; }
+    header .brand { font-size: 15px; margin-right: 10px; flex-shrink: 0; }
+    nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav a { height: 40px; padding: 0 10px; font-size: 13px; }
+
+    main { padding: 16px 12px 40px; gap: 12px; }
+    h1 { font-size: 19px; }
+
+    .toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+    #search-input, #category-filter { width: 100%; }
+    .tabs { justify-content: center; }
+    .count { margin-left: 0; text-align: center; }
+
+    .row.head { display: none; }
+    #rows .row, #category-rows .row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      padding: 14px 16px;
+    }
+    #rows .row > *, #category-rows .row > * { width: 100%; flex: none; }
+    .col-keyword { order: -1; font-size: 14px; font-weight: 700; white-space: normal; overflow: visible; text-overflow: unset; }
+    .col-save { text-align: left; }
+
+    .cat-add-row { flex-wrap: wrap; }
+    .cat-add-row input[type=text] { width: 100%; }
+
+    .reapply-panel { padding: 14px 16px; }
+  }
 </style>
 </head>
 <body>

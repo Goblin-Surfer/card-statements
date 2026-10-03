@@ -77,6 +77,37 @@
   .new-cat-inline input[type=text] { flex: 1; min-width: 0; }
   button.btn-mini { min-height: 32px; padding: 0 8px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 11px; font-weight: 500; cursor: pointer; white-space: nowrap; }
   button.btn-mini.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
+
+  /* ===== モバイル対応 ===== */
+  @media (max-width: 680px) {
+    header { height: auto; min-height: 56px; padding: 8px 14px; flex-wrap: nowrap; }
+    header .brand { font-size: 15px; margin-right: 10px; flex-shrink: 0; }
+    nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav a { height: 40px; padding: 0 10px; font-size: 13px; }
+
+    main { padding: 16px 12px 40px; gap: 12px; }
+    h1 { font-size: 19px; }
+
+    .toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+    .month-nav { justify-content: center; }
+    #card-filter { width: 100%; }
+    .tabs { justify-content: center; }
+    .count { margin-left: 0; text-align: center; }
+
+    .row.head { display: none; }
+    #rows .row, #loading-row.row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      padding: 14px 16px;
+    }
+    #rows .row > *, #loading-row.row > * { width: 100%; flex: none; }
+    .col-merchant { order: -2; font-size: 15px; font-weight: 700; white-space: normal; overflow: visible; text-overflow: unset; }
+    .col-date { order: -1; font-size: 12px; }
+    .col-amount { text-align: right; font-size: 16px; }
+    .col-status { justify-content: flex-start; }
+  }
 </style>
 </head>
 <body>

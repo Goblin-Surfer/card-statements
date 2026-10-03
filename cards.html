@@ -124,6 +124,36 @@
 
   .hidden { display: none !important; }
   .muted { color: var(--text-muted); font-size: 13px; }
+
+  /* ===== モバイル対応 ===== */
+  @media (max-width: 680px) {
+    header { height: auto; min-height: 56px; padding: 8px 14px; flex-wrap: nowrap; }
+    header .brand { font-size: 15px; margin-right: 10px; flex-shrink: 0; }
+    nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav a { height: 40px; padding: 0 10px; font-size: 13px; }
+
+    main { padding: 16px 12px 40px; gap: 12px; }
+    h1 { font-size: 19px; }
+
+    .row.head { display: none; }
+    #cards-list .row, #loading-row.row, #empty-row.row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding: 14px 16px;
+    }
+    #cards-list .row > * { width: 100% !important; flex: none; }
+    .col-card { order: -1; }
+    .col-actions { justify-content: flex-start; }
+    #cards-list .row input[type=text],
+    #cards-list .row input[type=number] { width: 100% !important; }
+
+    .panel-title { padding: 16px 16px 4px; }
+    .add-row { padding: 16px; gap: 12px; }
+    .add-row .add-field { width: 100% !important; }
+    #new-last4, #new-issuer, #new-payment-day { width: 100% !important; }
+  }
 </style>
 </head>
 <body>
