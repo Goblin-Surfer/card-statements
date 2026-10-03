@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ナレッジ | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+    --success-text: #14513F;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  p.lead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+
+  .toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 4px; padding: 4px; background: #E7E1D3; border-radius: 12px; flex-wrap: wrap; }
+  .tabs button { min-height: 36px; padding: 0 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; background: transparent; color: var(--text-sub); }
+  .tabs button.active { background: #211F1A; color: #FFFFFF; }
+  #search-input { width: 220px; }
+  .count { margin-left: auto; font-size: 13px; color: var(--text-muted); }
+
+  section.panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-top: 1px solid #ECE6D8; flex-wrap: wrap; }
+  .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-size: 12px; font-weight: 700; color: var(--text-muted); }
+
+  .col-keyword { flex: 1; min-width: 180px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-category { width: 160px; flex-shrink: 0; }
+  .col-source { width: 150px; flex-shrink: 0; }
+  .col-save { width: 90px; flex-shrink: 0; text-align: right; font-size: 12px; }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+  select, input[type=text] { height: 32px; box-sizing: border-box; padding: 0 8px; border: 1.5px solid var(--border-light); border-radius: 8px; background: #FFFFFF; font-size: 13px; width: 100%; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .pill-human { background: #DDEFE3; color: var(--success-text); }
+  .pill-ai { background: #DCEEFB; color: #1C5A8A; }
+
+  .save-status { font-size: 12px; color: var(--text-muted); }
+  .save-status.ok { color: var(--success-text); font-weight: 700; }
+  .save-status.err { color: var(--error-text); font-weight: 700; }
+
+  .error-banner { box-sizing: border-box; padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .empty { padding: 40px 20px; text-align: center; font-size: 14px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+  <header>
+    <span class="brand">カード利用明細</span>
+    <nav aria-label="メイン">
+      <a href="./list.html">明細一覧</a>
+      <a href="./input.html">手入力</a>
+      <a href="./analysis.html">分析</a>
+      <a href="./knowledge.html" class="active" aria-current="page">ナレッジ</a>
+      <a href="./cards.html">カード設定</a>
+      <a href="./logs.html">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>ナレッジ</h1>
+
+    <p id="error-banner" class="error-banner hidden"></p>
+
+    <div class="toolbar">
+      <input type="text" id="search-input" placeholder="利用先キーワードで検索">
+      <div class="tabs" id="source-tabs"></div>
+      <span class="count" id="row-count"></span>
+    </div>
+
+    <section class="panel">
+      <div class="row head">
+        <span class="col-keyword">利用先キーワード</span>
+        <span class="col-category">分類</span>
+        <span class="col-source">状態</span>
+        <span class="col-save"></span>
+      </div>
+      <div id="loading-row" class="row"><span style="color:var(--text-muted);">読み込み中…</span></div>
+      <div id="rows"></div>
+      <div id="empty" class="empty hidden">この条件に一致するルールはありません。</div>
+    </section>
+
+    <p class="lead">ここに並んでいるのは、利用先の名前に含まれていれば自動的にそのカテゴリに分類される「キーワード」の一覧です（明細一覧で保存すると、自動的にここへ追加されます）。分類を変更すると、次回以降の自動取込や、今すでに「AI推定（要確認）」になっている明細にも反映されます（すでに確定済みの明細の分類は変わりません）。「AI推定」のまま残っているものは、まだ人間が一度も確認していないキーワードです。</p>
+  </main>
+
+<script>
+  const CATS = ['食費', '日用品', '水道光熱', '通信', '交通費', 'その他'];
+
+  const state = {
+    session: null,
+    rules: [],
+    search: '',
+    sourceFilter: 'all',
+    loading: true,
+    saveState: {} // id -> 'saving' | 'ok' | 'err'
+  };
+
+  const errorBanner = document.getElementById('error-banner');
+  const searchInput = document.getElementById('search-input');
+  const sourceTabsEl = document.getElementById('source-tabs');
+  const rowCountEl = document.getElementById('row-count');
+  const loadingRow = document.getElementById('loading-row');
+  const rowsEl = document.getElementById('rows');
+  const emptyEl = document.getElementById('empty');
+
+  function showError(message) {
+    if (!message) { errorBanner.classList.add('hidden'); return; }
+    errorBanner.textContent = message;
+    errorBanner.classList.remove('hidden');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  }
+
+  function categoryOptionsHtml(selected) {
+    return CATS.map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
+  }
+
+  function renderTabs() {
+    const options = [['all', 'すべて'], ['ai', 'AI推定（要確認）'], ['human', '確定済み']];
+    sourceTabsEl.innerHTML = options.map(([id, label]) =>
+      `<button type="button" data-source-filter="${id}" class="${state.sourceFilter === id ? 'active' : ''}">${label}</button>`
+    ).join('');
+    sourceTabsEl.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => { state.sourceFilter = btn.dataset.sourceFilter; renderRows(); });
+    });
+  }
+
+  function visibleRules() {
+    const q = state.search.trim();
+    return state.rules.filter((r) => {
+      if (state.sourceFilter !== 'all' && r.source !== state.sourceFilter) return false;
+      if (q && !r.keyword.includes(q)) return false;
+      return true;
+    });
+  }
+
+  function renderRows() {
+    loadingRow.classList.toggle('hidden', !state.loading);
+    const visible = state.loading ? [] : visibleRules();
+    emptyEl.classList.toggle('hidden', state.loading || visible.length > 0);
+    rowCountEl.textContent = state.loading ? '' : visible.length + '件 / 全' + state.rules.length + '件';
+
+    rowsEl.innerHTML = visible.map((r) => {
+      const isAi = r.source === 'ai';
+      const sourceBadge = isAi
+        ? `<span class="pill pill-ai"><span class="dot" style="background:#2F8FD6;"></span>AI推定（要確認）</span>`
+        : `<span class="pill pill-human"><span class="dot" style="background:#0CA30C;"></span>確定済み</span>`;
+
+      const saveState = state.saveState[r.id];
+      let saveStatusHtml = '';
+      if (saveState === 'saving') saveStatusHtml = `<span class="save-status">保存中…</span>`;
+      else if (saveState === 'ok') saveStatusHtml = `<span class="save-status ok">保存しました</span>`;
+      else if (saveState === 'err') saveStatusHtml = `<span class="save-status err">保存失敗</span>`;
+
+      return `
+        <div class="row" data-row-id="${r.id}">
+          <span class="col-keyword" title="${escapeHtml(r.keyword)}">${escapeHtml(r.keyword)}</span>
+          <span class="col-category"><select data-id="${r.id}">${categoryOptionsHtml(r.category_name)}</select></span>
+          <span class="col-source">${sourceBadge}</span>
+          <span class="col-save">${saveStatusHtml}</span>
+        </div>`;
+    }).join('');
+
+    bindRowEvents();
+  }
+
+  function bindRowEvents() {
+    rowsEl.querySelectorAll('select[data-id]').forEach((sel) => {
+      sel.addEventListener('change', () => saveRule(sel.dataset.id, sel.value));
+    });
+  }
+
+  async function saveRule(id, category) {
+    const rule = state.rules.find((r) => r.id === id);
+    if (!rule) return;
+
+    state.saveState[id] = 'saving';
+    renderRows();
+
+    // 自分でここから分類を確定させた時点で、そのキーワードは人間確定（source: 'human'）とみなす。
+    const { error } = await supabaseClient
+      .from('merchant_categories')
+      .update({ category_name: category, source: 'human' })
+      .eq('id', id);
+
+    if (error) {
+      state.saveState[id] = 'err';
+      showError('保存エラー: ' + error.message);
+      renderRows();
+      return;
+    }
+
+    showError(null);
+    rule.category_name = category;
+    rule.source = 'human';
+    state.saveState[id] = 'ok';
+    renderRows();
+    setTimeout(() => {
+      if (state.saveState[id] === 'ok') { delete state.saveState[id]; renderRows(); }
+    }, 2000);
+  }
+
+  async function loadRules() {
+    state.loading = true;
+    renderTabs();
+    renderRows();
+
+    const { data, error } = await supabaseClient
+      .from('merchant_categories')
+      .select('id, keyword, category_name, priority, source')
+      .order('keyword', { ascending: true });
+
+    state.loading = false;
+
+    if (error) {
+      showError('読み込みエラー: ' + error.message);
+      state.rules = [];
+    } else {
+      showError(null);
+      state.rules = data;
+    }
+    renderRows();
+  }
+
+  let searchDebounce = null;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      state.search = searchInput.value;
+      renderRows();
+    }, 150);
+  });
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    await loadRules();
+  })();
+</script>
+
+</body>
+</html>
