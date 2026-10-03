@@ -35,7 +35,8 @@
     background: #FFFFFF;
     border-bottom: 1px solid var(--border);
   }
-  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; color: var(--text); text-decoration: none; cursor: pointer; }
+  header .brand:hover { color: var(--blue); }
   nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
   nav a {
     display: flex; align-items: center; padding: 0 12px; height: 64px;
@@ -159,7 +160,7 @@
 <body>
 
   <header>
-    <span class="brand">カード利用明細</span>
+    <a href="./list.html" class="brand">カード利用明細</a>
     <nav aria-label="メイン">
       <a href="./list.html">明細一覧</a>
       <a href="./input.html">手入力</a>

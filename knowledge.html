@@ -21,7 +21,8 @@
   a:hover { color: var(--text); }
 
   header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
-  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; color: var(--text); text-decoration: none; cursor: pointer; }
+  header .brand:hover { color: var(--blue); }
   nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
   nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
   nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
@@ -112,7 +113,7 @@
 <body>
 
   <header>
-    <span class="brand">カード利用明細</span>
+    <a href="./list.html" class="brand">カード利用明細</a>
     <nav aria-label="メイン">
       <a href="./list.html">明細一覧</a>
       <a href="./input.html">手入力</a>
