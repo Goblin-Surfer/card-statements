@@ -70,6 +70,9 @@
   .cat-add-row { display: flex; gap: 8px; align-items: center; }
   .cat-add-row input[type=text] { width: 260px; }
   h2.section-title { margin: 8px 0 0; font-size: 18px; font-weight: 700; }
+
+  .reapply-panel { box-sizing: border-box; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .reapply-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -109,7 +112,18 @@
       <div id="empty" class="empty hidden">この条件に一致するルールはありません。</div>
     </section>
 
-    <p class="lead">ここに並んでいるのは、利用先の名前に含まれていれば自動的にそのカテゴリに分類される「キーワード」の一覧です（明細一覧で保存すると、自動的にここへ追加されます）。分類を変更すると、次回以降の自動取込や、今すでに「AI推定（要確認）」になっている明細にも反映されます（すでに確定済みの明細の分類は変わりません）。「AI推定」のまま残っているものは、まだ人間が一度も確認していないキーワードです。</p>
+    <p class="lead">ここに並んでいるのは、利用先の名前に含まれていれば自動的にそのカテゴリに分類される「キーワード」の一覧です（明細一覧で保存すると、自動的にここへ追加されます）。「AI推定」のまま残っているものは、まだ人間が一度も確認していないキーワードです。</p>
+
+    <section class="reapply-panel">
+      <div>
+        <strong>ナレッジを直したら</strong>
+        <p class="lead" style="margin-top:4px;">ルールを直したり追加したりしても、すでに取り込み済みの明細は自動では変わりません。下のボタンで、まだ人が確認していない明細（カテゴリ未設定・AI推定のもの）だけに、今のルールを当てはめ直せます。確定済みの明細は変わりません。</p>
+      </div>
+      <div class="reapply-actions">
+        <button type="button" class="btn-mini btn-primary" id="reapply-button">今のルールを未確認の明細に当てはめ直す</button>
+        <span id="reapply-status" class="save-status"></span>
+      </div>
+    </section>
 
     <h2 class="section-title">カテゴリ管理</h2>
     <p class="lead">カテゴリの名前を変更したり、既存の別カテゴリにまとめたりできます。ここでの変更は、そのカテゴリを使っているナレッジのキーワードと、確定済みの明細にもすぐに反映されます。</p>
@@ -473,6 +487,82 @@
       state.search = searchInput.value;
       renderRows();
     }, 150);
+  });
+
+  // --- ナレッジの一括再適用 ---
+  // すでに取り込み済みの明細のうち、人間がまだ確認していないもの（category_source が
+  // 'human' ではないもの＝未設定 or 'ai'）だけを対象に、今の merchant_categories ルールで
+  // 再判定する。import-csv Edge Function の resolveCategory() と同じロジック（keyword が
+  // merchant に含まれるものの中から priority 降順→keyword長さ降順で一番強いものを採用）。
+  // 人間が一度でも確定させた明細（category_source === 'human'）は絶対に触らない。
+  function resolveWithCurrentRules(merchant) {
+    const matches = state.rules.filter((r) => r.keyword && r.keyword.length > 0 && merchant.includes(r.keyword));
+    if (matches.length === 0) return null;
+    matches.sort((a, b) => (b.priority - a.priority) || (b.keyword.length - a.keyword.length));
+    return { category: matches[0].category_name, source: matches[0].source };
+  }
+
+  async function reapplyKnowledge() {
+    const btn = document.getElementById('reapply-button');
+    const statusEl = document.getElementById('reapply-status');
+    btn.disabled = true;
+    statusEl.className = 'save-status';
+    statusEl.textContent = '対象の明細を確認中…';
+
+    const { data: targets, error } = await supabaseClient
+      .from('card_statements')
+      .select('id, merchant, category, category_source')
+      .or('category_source.is.null,category_source.eq.ai');
+
+    if (error) {
+      statusEl.textContent = '読み込みエラー: ' + error.message;
+      statusEl.className = 'save-status err';
+      btn.disabled = false;
+      return;
+    }
+
+    const updates = [];
+    for (const row of targets ?? []) {
+      const resolved = resolveWithCurrentRules(row.merchant);
+      if (!resolved) continue;
+      if (resolved.category === row.category && resolved.source === row.category_source) continue;
+      updates.push({ id: row.id, category: resolved.category, category_source: resolved.source });
+    }
+
+    if (updates.length === 0) {
+      statusEl.textContent = '変更が必要な明細はありませんでした。';
+      statusEl.className = 'save-status ok';
+      btn.disabled = false;
+      return;
+    }
+
+    statusEl.textContent = `${updates.length}件を更新中…`;
+
+    let okCount = 0;
+    let errCount = 0;
+    let idx = 0;
+    const concurrency = 8;
+    async function worker() {
+      while (idx < updates.length) {
+        const item = updates[idx++];
+        const { error: upErr } = await supabaseClient
+          .from('card_statements')
+          .update({ category: item.category, category_source: item.category_source })
+          .eq('id', item.id);
+        if (upErr) errCount++; else okCount++;
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, updates.length) }, worker));
+
+    statusEl.textContent = errCount > 0
+      ? `${okCount}件を更新しました（${errCount}件は失敗しました）`
+      : `${okCount}件の明細を今のナレッジで更新しました。`;
+    statusEl.className = errCount > 0 ? 'save-status err' : 'save-status ok';
+    btn.disabled = false;
+  }
+
+  document.getElementById('reapply-button').addEventListener('click', () => {
+    reapplyKnowledge();
   });
 
   (async () => {
