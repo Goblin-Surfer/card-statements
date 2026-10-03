@@ -210,7 +210,7 @@
       `<button type="button" data-source-filter="${id}" class="${state.sourceFilter === id ? 'active' : ''}">${label}</button>`
     ).join('');
     sourceTabsEl.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', () => { state.sourceFilter = btn.dataset.sourceFilter; renderRows(); });
+      btn.addEventListener('click', () => { state.sourceFilter = btn.dataset.sourceFilter; renderTabs(); renderRows(); });
     });
   }
 
