@@ -13,13 +13,18 @@
 // デプロイ: supabase functions deploy import-csv --no-verify-jwt
 // （JWT検証はこの関数の中で独自に行うため、Supabase標準の自動検証は無効にする）
 //
-// カテゴリ自動分類: merchant_categories（利用先キーワード→カテゴリ、priority）に
+// カテゴリ自動分類: merchant_categories（利用先キーワード→カテゴリ、priority、source）に
 // 一致すればそれを使う。一致しない「初めての利用先」は、
 // CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN が設定されていれば
 // Cloudflare Workers AI に推測してもらい、結果をその場でmerchant_categoriesに
-// 記録する（次回以降はAI判定なしで自動分類される）。AIが「不明」と判断した場合や
-// シークレット未設定の場合はcategoryをnullのままにし、list.html側で
+// source='ai'として記録する（次回以降はAI判定なしで自動分類される）。AIが「不明」と
+// 判断した場合やシークレット未設定の場合はcategoryをnullのままにし、list.html側で
 // 人間の判断に回す。
+//
+// card_statements.category_source には、そのカテゴリが人間確定のキーワードに
+// 一致したのか('human')、AI推測のキーワードに一致した/今回AIが推測したのか('ai')を
+// 記録する。list.html はこれを見て、AI推測のものを「要確認」として表示する
+// （AIはCloudflare Workers AIの無料枠の小型モデルのため、精度が完璧ではないため）。
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -307,13 +312,14 @@ async function computeImportHash(cardId: string, row: ParsedRow): Promise<string
 // （同じ priority なら keyword が長い=より具体的なもの）を採用する。
 // 一致するルールが無ければ null を返し、list.html 側で人間に判断してもらう。
 // ---------------------------------------------------------------------------
-type CategoryRule = { keyword: string; category_name: string; priority: number };
+type CategoryRule = { keyword: string; category_name: string; priority: number; source: string };
+type CategoryResolution = { category: string; source: string };
 
 function resolveCategory(
   rulesByUser: Map<string, CategoryRule[]>,
   userId: string,
   merchant: string,
-): string | null {
+): CategoryResolution | null {
   const rules = rulesByUser.get(userId);
   if (!rules || rules.length === 0) return null;
 
@@ -324,7 +330,9 @@ function resolveCategory(
     if (b.priority !== a.priority) return b.priority - a.priority;
     return b.keyword.length - a.keyword.length;
   });
-  return matches[0].category_name;
+  // source: 人間が確定した('human')キーワードに一致していれば確定扱い。
+  // AIが推測して登録した('ai')キーワードに一致した場合は、まだ人間未確認として扱う。
+  return { category: matches[0].category_name, source: matches[0].source };
 }
 
 // list.html の CATS と必ず同じ内容にすること（手入力・一覧の分類と食い違わないように）
@@ -421,7 +429,7 @@ Deno.serve(async (req: Request) => {
     ] = await Promise.all([
       admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
       admin.from("csv_import_profiles").select("*"),
-      admin.from("merchant_categories").select("user_id, keyword, category_name, priority"),
+      admin.from("merchant_categories").select("user_id, keyword, category_name, priority, source"),
     ]);
     if (cardsErr) throw cardsErr;
     if (profilesErr) throw profilesErr;
@@ -435,7 +443,7 @@ Deno.serve(async (req: Request) => {
     const categoryRulesByUser = new Map<string, CategoryRule[]>();
     for (const r of categoryRuleRows ?? []) {
       const list = categoryRulesByUser.get(r.user_id) ?? [];
-      list.push({ keyword: r.keyword, category_name: r.category_name, priority: r.priority });
+      list.push({ keyword: r.keyword, category_name: r.category_name, priority: r.priority, source: r.source ?? "human" });
       categoryRulesByUser.set(r.user_id, list);
     }
 
@@ -488,22 +496,28 @@ Deno.serve(async (req: Request) => {
           const insertRows: Record<string, unknown>[] = [];
           for (const r of rows) {
             // 1. まずナレッジ（merchant_categories）に一致するか確認
-            let category = resolveCategory(categoryRulesByUser, card.user_id, r.merchant);
+            const resolved = resolveCategory(categoryRulesByUser, card.user_id, r.merchant);
+            let category: string | null = resolved?.category ?? null;
+            // category_source: 'human' = 人間が確定したキーワードに一致 → 確定扱い。
+            // 'ai' = AIが推測しただけ（まだ人間未確認）→ list.html で要確認表示にする。
+            let categorySource: string | null = resolved?.source ?? null;
 
             // 2. 一致しない「初めての利用先」だけ、Cloudflare Workers AIに判定してもらう
             if (!category) {
               const aiCategory = await classifyWithAI(r.merchant);
               if (aiCategory) {
                 category = aiCategory;
+                categorySource = "ai";
 
                 // 次回以降（このファイル内の後続行も含む）は同じ利用先が
                 // AI判定なしで自動分類されるよう、その場でナレッジに記録する
+                // （source: 'ai' のまま。人間がlist.htmlで修正・確認すると 'human' に更新される）
                 const rules = categoryRulesByUser.get(card.user_id) ?? [];
-                rules.push({ keyword: r.merchant, category_name: aiCategory, priority: 0 });
+                rules.push({ keyword: r.merchant, category_name: aiCategory, priority: 0, source: "ai" });
                 categoryRulesByUser.set(card.user_id, rules);
 
                 const { error: ruleError } = await admin.from("merchant_categories").upsert(
-                  { user_id: card.user_id, keyword: r.merchant, category_name: aiCategory, priority: 0 },
+                  { user_id: card.user_id, keyword: r.merchant, category_name: aiCategory, priority: 0, source: "ai" },
                   { onConflict: "user_id,keyword" },
                 );
                 // ナレッジ登録に失敗しても、この行のカテゴリ設定自体は成立しているので
@@ -523,6 +537,7 @@ Deno.serve(async (req: Request) => {
               amount: r.amount,
               merchant: r.merchant,
               category,
+              category_source: categorySource,
               memo: r.memo,
               status: "confirmed",
               source: "auto",

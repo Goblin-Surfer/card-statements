@@ -64,6 +64,7 @@
   .pill-review { background: #FDECC8; color: #8A5A00; }
   .pill-confirmed { background: #DDEFE3; color: #14513F; }
   .pill-category { background: #EEE3FB; color: #4B2E83; }
+  .pill-ai { background: #DCEEFB; color: #1C5A8A; }
 
   button.btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; }
   button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
@@ -117,7 +118,7 @@
       <div id="empty" class="empty hidden">この条件に一致する明細はありません。</div>
     </section>
 
-    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「要確認」は金額や日付の形式が想定外で自動取込できなかった明細です。内容を直して「確定」を押すと集計対象になります。</p>
+    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「AI推定（要確認）」はAIが推測しただけでまだ人間が確認していないカテゴリです。合っていればそのまま保存、違っていれば直してから保存してください（一度保存すれば次回から確定扱いになります）。「要確認」は金額や日付の形式が想定外で自動取込できなかった明細です。内容を直して「確定」を押すと集計対象になります。</p>
   </main>
 
 <script>
@@ -206,7 +207,8 @@
       const meta = cardMeta(r.card_id);
       const needsReview = r.status === 'needs_review';
       const needsCategory = !r.category;
-      const editing = needsReview || needsCategory || state.editingIds.has(r.id);
+      const needsAiConfirm = !!r.category && r.category_source === 'ai';
+      const editing = needsReview || needsCategory || needsAiConfirm || state.editingIds.has(r.id);
       const edit = state.edits[r.id] || { category: r.category || '', memo: r.memo || '' };
 
       const dateLabel = r.used_date.slice(5).replace('-', '/');
@@ -222,8 +224,8 @@
       let actionCell;
       if (needsReview) {
         actionCell = `<button type="button" class="btn btn-primary" data-action="confirm" data-id="${r.id}">確定</button>`;
-      } else if (needsCategory && !state.editingIds.has(r.id)) {
-        // すでに確定済みだがカテゴリ未設定（初めての利用先など）→ 分類を選んで保存するだけでよい
+      } else if ((needsCategory || needsAiConfirm) && !state.editingIds.has(r.id)) {
+        // カテゴリ未設定、またはAI推測のまま未確認 → 分類を選んで（必要なら直して）保存するだけでよい
         actionCell = `<button type="button" class="btn btn-primary" data-action="confirm" data-id="${r.id}">保存</button>`;
       } else if (state.editingIds.has(r.id)) {
         actionCell = `
@@ -238,9 +240,11 @@
       const pillDot = needsReview ? '#FAB219' : '#0CA30C';
       const categoryBadge = needsCategory
         ? `<span class="pill pill-category"><span class="dot" style="background:#7C4DBE;"></span>カテゴリ未設定</span>`
+        : needsAiConfirm
+        ? `<span class="pill pill-ai"><span class="dot" style="background:#2F8FD6;"></span>AI推定（要確認）</span>`
         : '';
 
-      const rowClass = needsReview ? 'needs-review' : (needsCategory ? 'needs-category' : '');
+      const rowClass = needsReview ? 'needs-review' : ((needsCategory || needsAiConfirm) ? 'needs-category' : '');
 
       return `
         <div class="row ${rowClass}" data-row-id="${r.id}">
@@ -303,19 +307,22 @@
   async function saveRow(id, confirm) {
     const edit = state.edits[id] || {};
     const category = edit.category || null;
-    const patch = { category, memo: edit.memo || null };
+    // 人間がこの画面で保存した時点で、そのカテゴリは確定（category_source: 'human'）とみなす。
+    // これにより、AIが推測しただけで未確認だった行も、一度保存すれば「要確認」表示から外れる。
+    const patch = { category, memo: edit.memo || null, category_source: category ? 'human' : null };
     if (confirm) patch.status = 'confirmed';
 
     const { error } = await supabaseClient.from('card_statements').update(patch).eq('id', id);
     if (error) { showError('更新エラー: ' + error.message); return; }
 
     // カテゴリを設定/修正した場合は、その利用先をナレッジ（merchant_categories）に
-    // 記録しておく。次回以降、同じ利用先は自動的に同じカテゴリで取り込まれる。
+    // 人間確定（source: 'human'）として記録しておく。次回以降、同じ利用先は
+    // AI判定を挟まずに自動的に同じカテゴリで取り込まれる。
     if (category) {
       const row = state.rows.find((r) => r.id === id);
       if (row) {
         const { error: ruleError } = await supabaseClient.from('merchant_categories').upsert(
-          { user_id: state.session.user.id, keyword: row.merchant, category_name: category, priority: 0 },
+          { user_id: state.session.user.id, keyword: row.merchant, category_name: category, priority: 0, source: 'human' },
           { onConflict: 'user_id,keyword' },
         );
         // ナレッジの保存に失敗しても明細自体の保存は成立しているので、画面には出さずログのみに残す
