@@ -155,7 +155,8 @@
     creatingCategoryFor: null, // rule id currently showing the inline 新規カテゴリ入力
     newCategoryDraftName: '',
     editingCategoryId: null, // カテゴリ管理パネルで編集中のカテゴリid
-    categoryEditDraft: null
+    categoryEditDraft: null,
+    deletingCategoryId: null // カテゴリ管理パネルで削除確認中のカテゴリid
   };
 
   const errorBanner = document.getElementById('error-banner');
@@ -332,6 +333,17 @@
       return;
     }
     categoryRowsEl.innerHTML = state.categories.map((c) => {
+      if (state.deletingCategoryId === c.id) {
+        return `
+          <div class="row" data-cat-row-id="${c.id}">
+            <span class="col-keyword">${escapeHtml(c.name)}</span>
+            <span class="col-category" style="color:var(--error-text); font-weight:700;">本当に削除しますか？</span>
+            <span class="col-save">
+              <button type="button" class="btn-mini" data-action="confirm-delete-category" data-id="${c.id}" style="border-color:var(--error-text); color:var(--error-text);">削除する</button>
+              <button type="button" class="btn-mini" data-action="cancel-delete-category" data-id="${c.id}">やめる</button>
+            </span>
+          </div>`;
+      }
       if (state.editingCategoryId === c.id) {
         const others = state.categories.filter((oc) => oc.id !== c.id);
         const mergeOptions = others.map((oc) =>
@@ -357,7 +369,10 @@
         <div class="row" data-cat-row-id="${c.id}">
           <span class="col-keyword">${escapeHtml(c.name)}</span>
           <span class="col-category">${ruleCountFor(c.name)}件</span>
-          <span class="col-save"><button type="button" class="btn-mini" data-action="edit-category" data-id="${c.id}">編集</button></span>
+          <span class="col-save">
+            <button type="button" class="btn-mini" data-action="edit-category" data-id="${c.id}">編集</button>
+            <button type="button" class="btn-mini" data-action="delete-category" data-id="${c.id}">削除</button>
+          </span>
         </div>`;
     }).join('');
     bindCategoryPanelEvents();
@@ -366,10 +381,28 @@
   function bindCategoryPanelEvents() {
     categoryRowsEl.querySelectorAll('[data-action="edit-category"]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        state.deletingCategoryId = null;
         state.editingCategoryId = btn.dataset.id;
         state.categoryEditDraft = null;
         renderCategoryPanel();
       });
+    });
+    categoryRowsEl.querySelectorAll('[data-action="delete-category"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.editingCategoryId = null;
+        state.categoryEditDraft = null;
+        state.deletingCategoryId = btn.dataset.id;
+        renderCategoryPanel();
+      });
+    });
+    categoryRowsEl.querySelectorAll('[data-action="cancel-delete-category"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.deletingCategoryId = null;
+        renderCategoryPanel();
+      });
+    });
+    categoryRowsEl.querySelectorAll('[data-action="confirm-delete-category"]').forEach((btn) => {
+      btn.addEventListener('click', () => deleteCategory(btn.dataset.id));
     });
     categoryRowsEl.querySelectorAll('[data-action="cancel-category-edit"]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -384,6 +417,51 @@
     categoryRowsEl.querySelectorAll('[data-action="save-category"]').forEach((btn) => {
       btn.addEventListener('click', () => saveCategoryEdit(btn.dataset.id));
     });
+  }
+
+  // カテゴリの削除。
+  // ナレッジ（merchant_categories）・明細（card_statements）のどちらかでまだ使われている場合は
+  // 削除せず、編集から既存カテゴリへまとめてから削除するよう案内する（誤って参照が宙に浮くのを防ぐ）。
+  async function deleteCategory(categoryId) {
+    const cat = state.categories.find((c) => c.id === categoryId);
+    if (!cat) return;
+
+    const [ruleCountRes, stmtCountRes] = await Promise.all([
+      supabaseClient.from('merchant_categories').select('id', { count: 'exact', head: true }).eq('category_name', cat.name),
+      supabaseClient.from('card_statements').select('id', { count: 'exact', head: true }).eq('category', cat.name),
+    ]);
+
+    if (ruleCountRes.error || stmtCountRes.error) {
+      showError('削除前の確認でエラーが発生しました: ' + (ruleCountRes.error || stmtCountRes.error).message);
+      state.deletingCategoryId = null;
+      renderCategoryPanel();
+      return;
+    }
+
+    const ruleCount = ruleCountRes.count ?? 0;
+    const stmtCount = stmtCountRes.count ?? 0;
+    if (ruleCount > 0 || stmtCount > 0) {
+      showError(
+        `「${cat.name}」はまだナレッジ${ruleCount}件・明細${stmtCount}件で使われているため削除できません。` +
+        `先に「編集」から既存の別カテゴリにまとめてから削除してください。`
+      );
+      state.deletingCategoryId = null;
+      renderCategoryPanel();
+      return;
+    }
+
+    const { error } = await supabaseClient.from('categories').delete().eq('id', categoryId);
+    if (error) {
+      showError('カテゴリ削除エラー: ' + error.message);
+      state.deletingCategoryId = null;
+      renderCategoryPanel();
+      return;
+    }
+
+    showError(null);
+    state.categories = state.categories.filter((c) => c.id !== categoryId);
+    state.deletingCategoryId = null;
+    renderCategoryPanel();
   }
 
   // カテゴリの名前変更／既存カテゴリへの統合。
