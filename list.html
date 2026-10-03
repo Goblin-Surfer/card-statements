@@ -253,11 +253,11 @@
     emptyEl.classList.toggle('hidden', state.loading || state.rows.length > 0);
     if (state.loading) {
       rowCountEl.textContent = '';
-    } else if (state.sharedOnly) {
-      const total = state.rows.reduce((sum, r) => sum + Number(r.amount), 0);
-      rowCountEl.textContent = state.rows.length + '件・合計 ' + total.toLocaleString('ja-JP') + '円';
     } else {
-      rowCountEl.textContent = state.rows.length + '件';
+      const total = state.rows.reduce((sum, r) => sum + Number(r.amount), 0);
+      const label = state.sharedOnly ? '清算対象の合計' : '合計';
+      rowCountEl.innerHTML = state.rows.length + '件・' + label + ' <strong style="color:var(--text);font-size:15px;">'
+        + total.toLocaleString('ja-JP') + '円</strong>';
     }
 
     rowsEl.innerHTML = state.rows.map((r) => {
