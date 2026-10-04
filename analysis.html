@@ -58,7 +58,15 @@
   .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .panel-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
   .panel-head .sub { font-size: 12px; color: var(--text-muted); }
-  .toggle-btn { min-height: 36px; padding: 0 14px; border: 1.5px solid var(--border-light); border-radius: 18px; background: #FFFFFF; color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
+  .trend-nav { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; flex-wrap: wrap; }
+  .trend-nav .nav-btn { min-height: 34px; padding: 0 12px; border: 1.5px solid var(--border-light); border-radius: 17px; background: #FFFFFF; color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; }
+  .trend-nav .nav-btn:disabled { color: var(--text-muted); opacity: 0.45; cursor: default; }
+  .trend-nav .trend-range { flex: 1; min-width: 120px; text-align: center; font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+  #trend-chart-view .chart-wrap { touch-action: pan-y; user-select: none; isolation: isolate; }
+  /* 選択中の月の帯は線の下に敷く（帯が線を隠して点と線が切れて見えないように） */
+  #trend-groups .bar-group.active { background: transparent; }
+  #trend-groups .bar-group.active::before { content: ""; position: absolute; inset: 0; background: #F0EADB; z-index: -1; }
+  .toggle-btn { white-space: nowrap; flex-shrink: 0; min-height: 36px; padding: 0 14px; border: 1.5px solid var(--border-light); border-radius: 18px; background: #FFFFFF; color: var(--text); font-size: 12px; font-weight: 500; cursor: pointer; }
 
   .legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .legend span { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-sub); }
@@ -72,7 +80,7 @@
   .chart-labels { display: flex; margin-left: 48px; }
   .chart-labels span { flex: 1; text-align: center; font-size: 12px; color: var(--text-muted); }
   .chart-labels span.active { font-weight: 700; color: var(--text); }
-  .readout { margin: 0; min-height: 20px; font-size: 13px; color: var(--text-sub); }
+  .readout { margin: 0 0 12px; min-height: 20px; font-size: 13px; color: var(--text-sub); }
   .readout strong { font-size: 15px; color: var(--text); }
 
   .bar-groups { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; align-items: flex-end; }
@@ -150,6 +158,8 @@
     .panel-head { align-items: center; }
 
     .chart-wrap { margin-left: 34px; }
+    .trend-nav .trend-range { order: -1; flex-basis: 100%; text-align: left; }
+    .trend-nav .nav-btn { padding: 0 10px; }
     .bar-group { min-width: 0; }
     .chart-ticks span { left: -34px; width: 30px; font-size: 10px; }
     .chart-labels { margin-left: 34px; }
@@ -223,9 +233,15 @@
           <div class="panel-head">
             <div>
               <h2>全カード合計の推移</h2>
-              <div class="sub">直近6か月・ホバーで金額表示、クリックでその月に切り替え</div>
+              <div class="sub">点に触れると金額、クリックでその月を表示。左右スワイプで移動</div>
             </div>
             <button type="button" class="toggle-btn" id="trend-toggle">表で見る</button>
+          </div>
+          <div class="trend-nav">
+            <button type="button" class="nav-btn" id="trend-older" aria-label="グラフを1か月前へ移動">‹ 前へ</button>
+            <span class="trend-range" id="trend-range"></span>
+            <button type="button" class="nav-btn" id="trend-newer" aria-label="グラフを1か月先へ移動">次へ ›</button>
+            <button type="button" class="nav-btn" id="trend-latest">最新</button>
           </div>
           <div id="trend-chart-view">
             <p class="readout" id="trend-readout"></p>
@@ -251,7 +267,7 @@
           <div class="panel-head">
             <div>
               <h2>カードごと・月ごとの合計金額</h2>
-              <div class="sub">直近6か月</div>
+              <div class="sub" id="bycard-sub"></div>
             </div>
             <div class="legend" id="bycard-legend"></div>
           </div>
@@ -294,6 +310,9 @@
     cards: [],
     year: today.getFullYear(),
     month: today.getMonth() + 1,
+    viewEnd: { year: today.getFullYear(), month: today.getMonth() + 1 }, // グラフに表示する6か月の最後の月
+    monthMap: {},   // 'YYYY-MM-01' -> 月ごとの集計（全期間）
+    bounds: null,   // { earliest, latest }（monthIndex の値）
     monthsData: [], // [{year, month, total, byCard:{cardId:sum}, categories:{categoryName:sum}}]
     tableView: false,
     loading: true
@@ -331,53 +350,114 @@
     state.cards = data;
   }
 
-  async function loadWindowData() {
+  function monthIndex(y, m) { return y * 12 + (m - 1); }
+  function fromIndex(idx) { return { year: Math.floor(idx / 12), month: (idx % 12) + 1 }; }
+  function emptyAgg(y, m) {
+    return { year: y, month: m, total: 0, byCard: {}, categories: {}, merchantsByCategory: {}, sharedTotal: 0, sharedCount: 0 };
+  }
+  function aggFor(y, m) { return state.monthMap[isoMonthStart(y, m)] || emptyAgg(y, m); }
+
+  // 確定済み明細を全期間ぶん一度だけ読み込み、月ごとに集計しておく。
+  // 月の切り替えやグラフの移動は再読み込みなしで即座に反映される。
+  async function loadAllData() {
     state.loading = true;
     renderAll();
 
-    const months = windowMonths(state.year, state.month);
-    const startIso = isoMonthStart(months[0].year, months[0].month);
-    const endIso = isoMonthStart(months[5].year, months[5].month);
-
-    const { data, error } = await supabaseClient
-      .from('card_statements')
-      .select('billing_month, card_id, amount, merchant, category, is_shared')
-      .eq('status', 'confirmed')
-      .gte('billing_month', startIso)
-      .lte('billing_month', endIso);
-
-    state.loading = false;
-
-    if (error) {
-      showError('集計データの読み込みエラー: ' + error.message);
-      state.monthsData = months.map((m) => ({ ...m, total: 0, byCard: {}, merchants: {} }));
-      renderAll();
-      return;
+    const rows = [];
+    const PAGE = 1000; // Supabaseの1回あたりの上限に合わせて分割取得
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabaseClient
+        .from('card_statements')
+        .select('id, billing_month, card_id, amount, merchant, category, is_shared')
+        .eq('status', 'confirmed')
+        .order('billing_month', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        state.loading = false;
+        showError('集計データの読み込みエラー: ' + error.message);
+        state.monthMap = {};
+        state.bounds = null;
+        refreshWindow();
+        renderAll();
+        return;
+      }
+      rows.push(...data);
+      if (data.length < PAGE) break;
     }
     showError(null);
 
-    state.monthsData = months.map((m) => {
-      const key = isoMonthStart(m.year, m.month);
-      const rowsInMonth = data.filter((r) => r.billing_month === key);
-      const byCard = {};
-      const categories = {};
-      const merchantsByCategory = {};
-      let total = 0;
-      let sharedTotal = 0;
-      let sharedCount = 0;
-      rowsInMonth.forEach((r) => {
-        byCard[r.card_id] = (byCard[r.card_id] || 0) + Number(r.amount);
-        const categoryKey = r.category || '未分類';
-        categories[categoryKey] = (categories[categoryKey] || 0) + Number(r.amount);
-        if (!merchantsByCategory[categoryKey]) merchantsByCategory[categoryKey] = {};
-        merchantsByCategory[categoryKey][r.merchant] = (merchantsByCategory[categoryKey][r.merchant] || 0) + Number(r.amount);
-        total += Number(r.amount);
-        if (r.is_shared) { sharedTotal += Number(r.amount); sharedCount += 1; }
-      });
-      return { ...m, total, byCard, categories, merchantsByCategory, sharedTotal, sharedCount };
+    const map = {};
+    rows.forEach((r) => {
+      const key = r.billing_month.slice(0, 10);
+      if (!map[key]) {
+        const [y, m] = key.split('-').map(Number);
+        map[key] = emptyAgg(y, m);
+      }
+      const a = map[key];
+      const amount = Number(r.amount);
+      const categoryKey = r.category || '未分類';
+      a.byCard[r.card_id] = (a.byCard[r.card_id] || 0) + amount;
+      a.categories[categoryKey] = (a.categories[categoryKey] || 0) + amount;
+      if (!a.merchantsByCategory[categoryKey]) a.merchantsByCategory[categoryKey] = {};
+      a.merchantsByCategory[categoryKey][r.merchant] = (a.merchantsByCategory[categoryKey][r.merchant] || 0) + amount;
+      a.total += amount;
+      if (r.is_shared) { a.sharedTotal += amount; a.sharedCount += 1; }
     });
+    state.monthMap = map;
 
+    const dataIdx = Object.values(map).map((a) => monthIndex(a.year, a.month));
+    const todayIdx = monthIndex(today.getFullYear(), today.getMonth() + 1);
+    state.bounds = dataIdx.length
+      ? { earliest: Math.min(...dataIdx), latest: Math.max(todayIdx, ...dataIdx) }
+      : { earliest: todayIdx, latest: todayIdx };
+
+    state.loading = false;
+    refreshWindow();
     renderAll();
+  }
+
+  function refreshWindow() {
+    state.monthsData = windowMonths(state.viewEnd.year, state.viewEnd.month).map((m) => aggFor(m.year, m.month));
+  }
+
+  // グラフを delta か月ぶん左右に動かす（選択中の月はそのまま）
+  function viewEndLimits() {
+    if (!state.bounds) return null;
+    const { earliest, latest } = state.bounds;
+    return { min: Math.min(earliest + 5, latest), max: latest };
+  }
+  function shiftWindow(delta) {
+    const lim = viewEndLimits();
+    if (!lim) return;
+    const cur = monthIndex(state.viewEnd.year, state.viewEnd.month);
+    const next = Math.max(lim.min, Math.min(lim.max, cur + delta));
+    if (next === cur) return;
+    state.viewEnd = fromIndex(next);
+    refreshWindow();
+    renderAll();
+  }
+  function jumpToLatest() {
+    const lim = viewEndLimits();
+    if (!lim) return;
+    state.viewEnd = fromIndex(lim.max);
+    refreshWindow();
+    renderAll();
+  }
+
+  // 月を選ぶ。選んだ月がグラフの外なら、見える位置までだけグラフを動かす
+  function selectMonth(y, m) {
+    state.year = y; state.month = m;
+    const sel = monthIndex(y, m);
+    const end = monthIndex(state.viewEnd.year, state.viewEnd.month);
+    if (sel > end) state.viewEnd = fromIndex(sel);
+    else if (sel < end - 5) state.viewEnd = fromIndex(sel + 5);
+    refreshWindow();
+    renderAll();
+  }
+
+  function selectedIndexInWindow() {
+    return state.monthsData.findIndex((m) => m.year === state.year && m.month === state.month);
   }
 
   function renderAll() {
@@ -453,10 +533,11 @@
   }
 
   function currentMonthData() {
-    return state.monthsData[state.monthsData.length - 1];
+    return aggFor(state.year, state.month);
   }
   function prevMonthData() {
-    return state.monthsData.length > 1 ? state.monthsData[state.monthsData.length - 2] : null;
+    const p = fromIndex(monthIndex(state.year, state.month) - 1);
+    return aggFor(p.year, p.month);
   }
 
   function renderHero() {
@@ -503,6 +584,22 @@
   }
 
   function renderTrend() {
+    const selIdx = selectedIndexInWindow();
+    const first = state.monthsData[0];
+    const last = state.monthsData[state.monthsData.length - 1];
+    const rangeText = first && last
+      ? (first.year === last.year
+          ? `${first.year}年${first.month}月〜${last.month}月支払`
+          : `${first.year}年${first.month}月〜${last.year}年${last.month}月支払`)
+      : '';
+    document.getElementById('trend-range').textContent = rangeText;
+    document.getElementById('bycard-sub').textContent = rangeText;
+    const lim = viewEndLimits();
+    const endIdx = monthIndex(state.viewEnd.year, state.viewEnd.month);
+    document.getElementById('trend-older').disabled = !lim || endIdx <= lim.min;
+    document.getElementById('trend-newer').disabled = !lim || endIdx >= lim.max;
+    document.getElementById('trend-latest').disabled = !lim || endIdx >= lim.max;
+
     const maxAll = Math.max(1, ...state.monthsData.map((m) => m.total));
     const ticks = [0, Math.round(maxAll / 2), maxAll];
     document.getElementById('trend-ticks').innerHTML = ticks.map((v) => {
@@ -521,7 +618,7 @@
 
     document.getElementById('trend-groups').innerHTML = state.monthsData.map((m, i) => {
       const dotBottom = Math.round((m.total / maxAll) * 160);
-      const isActive = i === state.monthsData.length - 1;
+      const isActive = i === selIdx;
       return `
         <button type="button" class="bar-group ${isActive ? 'active' : ''}" data-month-index="${i}" aria-label="${m.month}月支払 合計${fmt(m.total)}円">
           <span class="dot" style="position:absolute;left:50%;bottom:${dotBottom}px;transform:translate(-50%,50%);background:#2A78D6;border:2px solid #FFFFFF;"></span>
@@ -551,10 +648,7 @@
     }
     document.querySelectorAll('#trend-groups [data-month-index]').forEach((btn) => {
       const m = state.monthsData[Number(btn.dataset.monthIndex)];
-      btn.addEventListener('click', () => {
-        state.year = m.year; state.month = m.month;
-        loadWindowData();
-      });
+      btn.addEventListener('click', () => selectMonth(m.year, m.month));
       btn.addEventListener('pointerenter', () => showTrendTooltip(btn, m));
       btn.addEventListener('pointerleave', () => hideTrendTooltip(btn));
       btn.addEventListener('focus', () => showTrendTooltip(btn, m));
@@ -562,13 +656,13 @@
     });
 
     document.getElementById('trend-labels').innerHTML = state.monthsData.map((m, i) =>
-      `<span class="${i === state.monthsData.length - 1 ? 'active' : ''}">${m.month}月</span>`
+      `<span class="${i === selIdx ? 'active' : ''}">${m.month}月</span>`
     ).join('');
 
     paintTrendReadout(currentMonthData());
 
     document.getElementById('trend-table-body').innerHTML = state.monthsData.map((m, i) =>
-      `<tr><td style="${i === state.monthsData.length - 1 ? 'font-weight:700;' : ''}">${m.month}月</td><td class="num">${fmt(m.total)}</td></tr>`
+      `<tr><td style="${i === selIdx ? 'font-weight:700;' : ''}">${m.year}年${m.month}月</td><td class="num">${fmt(m.total)}</td></tr>`
     ).join('');
   }
 
@@ -593,8 +687,9 @@
       return `<div class="${v === 0 ? 'zero' : ''}" style="bottom:${bottom}px;"><span>${v === 0 ? '0' : fmt(v / 1000) + 'k'}</span></div>`;
     }).join('');
 
+    const selIdx = selectedIndexInWindow();
     document.getElementById('bycard-groups').innerHTML = state.monthsData.map((m, i) => {
-      const isActive = i === state.monthsData.length - 1;
+      const isActive = i === selIdx;
       const bars = state.cards.map((c, idx) => {
         const v = m.byCard[c.id] || 0;
         const h = Math.round((v / barMax) * 160);
@@ -604,7 +699,7 @@
     }).join('');
 
     document.getElementById('bycard-labels').innerHTML = state.monthsData.map((m, i) =>
-      `<span class="${i === state.monthsData.length - 1 ? 'active' : ''}">${m.month}月</span>`
+      `<span class="${i === selIdx ? 'active' : ''}">${m.month}月</span>`
     ).join('');
   }
 
@@ -718,22 +813,60 @@
   }
 
   document.getElementById('prev-month').addEventListener('click', () => {
-    state.month -= 1;
-    if (state.month < 1) { state.month = 12; state.year -= 1; }
-    loadWindowData();
+    const p = fromIndex(monthIndex(state.year, state.month) - 1);
+    selectMonth(p.year, p.month);
   });
   document.getElementById('next-month').addEventListener('click', () => {
-    state.month += 1;
-    if (state.month > 12) { state.month = 1; state.year += 1; }
-    loadWindowData();
+    const n = fromIndex(monthIndex(state.year, state.month) + 1);
+    selectMonth(n.year, n.month);
   });
+
+  // グラフの左右移動：ボタン・スワイプ（ドラッグ）・トラックパッドの横スクロール
+  document.getElementById('trend-older').addEventListener('click', () => shiftWindow(-1));
+  document.getElementById('trend-newer').addEventListener('click', () => shiftWindow(1));
+  document.getElementById('trend-latest').addEventListener('click', jumpToLatest);
+
+  (() => {
+    const wrap = document.querySelector('#trend-chart-view .chart-wrap');
+    const SWIPE_PX = 40;   // これ以上横に動かしたらスワイプ扱い
+    const MONTH_PX = 60;   // 60pxごとに1か月ずつ動かす
+    let startX = null;
+    let swiped = false;
+    wrap.addEventListener('pointerdown', (e) => { startX = e.clientX; swiped = false; });
+    wrap.addEventListener('pointerup', (e) => {
+      if (startX === null) return;
+      const dx = e.clientX - startX;
+      startX = null;
+      if (Math.abs(dx) >= SWIPE_PX) {
+        swiped = true;
+        const months = Math.max(1, Math.round(Math.abs(dx) / MONTH_PX));
+        shiftWindow(dx < 0 ? months : -months); // 左へスワイプ＝新しい月へ
+      }
+    });
+    wrap.addEventListener('pointercancel', () => { startX = null; });
+    // スワイプ直後のクリックで月が切り替わらないようにする
+    wrap.addEventListener('click', (e) => {
+      if (swiped) { e.stopPropagation(); e.preventDefault(); swiped = false; }
+    }, true);
+
+    let wheelAcc = 0;
+    wrap.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return; // 縦スクロールはページに任せる
+      e.preventDefault();
+      wheelAcc += e.deltaX;
+      if (Math.abs(wheelAcc) >= 80) {
+        shiftWindow(wheelAcc > 0 ? 1 : -1);
+        wheelAcc = 0;
+      }
+    }, { passive: false });
+  })();
 
   (async () => {
     const session = await requireAuth();
     if (!session) return;
     state.session = session;
     await loadCards();
-    await loadWindowData();
+    await loadAllData();
   })();
 </script>
 
