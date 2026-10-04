@@ -120,6 +120,15 @@
   .merchant-bar { display: block; height: 14px; background: var(--blue); border-radius: 0 4px 4px 0; }
   .merchant-value { font-size: 13px; font-weight: 700; white-space: nowrap; }
   .merchant-share { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+  .merchant-row.cat-row { cursor: pointer; }
+  .merchant-row.cat-row:hover { background: #FAF8F2; }
+  .merchant-row.cat-row .merchant-name::before { content: '▸'; display: inline-block; width: 14px; color: var(--text-muted); font-size: 11px; }
+  .merchant-row.cat-row.open .merchant-name::before { content: '▾'; }
+  .merchant-row.sub-row { min-height: 32px; border-top: 1px dashed #EFEAE0; }
+  .merchant-row.sub-row .merchant-name { padding-left: 14px; font-size: 12px; color: var(--text-sub); }
+  .merchant-row.sub-row .merchant-bar { height: 10px; opacity: 0.5; }
+  .merchant-row.sub-row .merchant-value { font-size: 12px; font-weight: 500; }
+  .fixed-item-row .group { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
   .insight-line { font-size: 14px; line-height: 1.7; color: var(--text-sub); margin: 0 0 10px; }
   .insight-line:last-child { margin-bottom: 0; }
   .insight-section { padding: 12px 0; border-top: 1px solid #ECE6D8; }
@@ -405,7 +414,7 @@
   function monthIndex(y, m) { return y * 12 + (m - 1); }
   function fromIndex(idx) { return { year: Math.floor(idx / 12), month: (idx % 12) + 1 }; }
   function emptyAgg(y, m) {
-    return { year: y, month: m, total: 0, byCard: {}, categories: {}, merchantsByCategory: {}, merchants: {}, sharedTotal: 0, sharedCount: 0 };
+    return { year: y, month: m, total: 0, byCard: {}, categories: {}, subByCat: {}, merchantsByCategory: {}, merchants: {}, sharedTotal: 0, sharedCount: 0 };
   }
   function aggFor(y, m) { return state.monthMap[isoMonthStart(y, m)] || emptyAgg(y, m); }
 
@@ -420,7 +429,7 @@
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabaseClient
         .from('card_statements')
-        .select('id, billing_month, card_id, amount, merchant, category, is_shared')
+        .select('id, billing_month, card_id, amount, merchant, category, subcategory, is_shared, is_special')
         .eq('status', 'confirmed')
         .order('billing_month', { ascending: true })
         .order('id', { ascending: true })
@@ -455,10 +464,15 @@
       a.merchantsByCategory[categoryKey][r.merchant] = (a.merchantsByCategory[categoryKey][r.merchant] || 0) + amount;
       a.total += amount;
       if (r.is_shared) { a.sharedTotal += amount; a.sharedCount += 1; }
-      // 利用先ごと（表記ゆれをまとめたキー）の金額・回数。状況・改善案の分析に使う
-      const mKey = merchantKey(r.merchant);
+      const subKey = r.subcategory || '（中分類なし）';
+      if (!a.subByCat[categoryKey]) a.subByCat[categoryKey] = {};
+      a.subByCat[categoryKey][subKey] = (a.subByCat[categoryKey][subKey] || 0) + amount;
+      // 利用先ごと（表記ゆれをまとめたキー）の金額・回数。状況・改善案・固定費パネルで使う。
+      // 「特別な出費」ボタンを押した明細は、同じ店でも別枠（kind: 'manual'）として集計する
+      const mKey = merchantKey(r.merchant) + (r.is_special ? '#special' : '');
       const me = a.merchants[mKey] || (a.merchants[mKey] = {
-        name: merchantLabel(r.merchant), amount: 0, count: 0, shared: 0, category: categoryKey, kind: merchantKind(r.merchant, categoryKey)
+        name: merchantLabel(r.merchant), amount: 0, count: 0, shared: 0, category: categoryKey, subcategory: r.subcategory || null,
+        kind: r.is_special ? 'manual' : merchantKind(r.merchant, categoryKey, r.subcategory)
       });
       me.amount += amount;
       me.count += 1;
@@ -600,7 +614,19 @@
     renderInsights();
   }
 
-  const FIXED_CATEGORIES = ['固定費', '水道光熱', '通信'];
+  // 固定費：「住まい・光熱・通信」（電気・ガス・水道／通信）と、中分類「サブスク」。
+  // カテゴリ整理の前の旧カテゴリ（水道光熱・通信・固定費）にも対応しておく
+  const FIXED_GROUPS = [
+    { label: '電気・ガス・水道', test: (m) => (m.category === '住まい・光熱・通信' && m.subcategory !== '通信') || m.category === '水道光熱' },
+    { label: '通信', test: (m) => (m.category === '住まい・光熱・通信' && m.subcategory === '通信') || m.category === '通信' },
+    { label: 'サブスク', test: (m) => m.subcategory === 'サブスク' || m.category === '固定費' },
+  ];
+  function fixedItems(agg) {
+    return Object.entries(agg.merchants).map(([key, m]) => {
+      const g = FIXED_GROUPS.find((gr) => gr.test(m));
+      return g ? { key: key.replace(/#special$/, ''), name: m.name, amount: m.amount, group: g.label } : null;
+    }).filter(Boolean);
+  }
 
   function renderFixed() {
     const cur = currentMonthData();
@@ -609,44 +635,40 @@
 
     document.getElementById('fixed-sub').textContent = state.year + '年' + state.month + '月支払分';
 
-    const fixedTotal = FIXED_CATEGORIES.reduce((sum, name) => sum + (cur.categories[name] || 0), 0);
+    const items = fixedItems(cur);
+    const byGroup = {};
+    items.forEach((it) => { byGroup[it.group] = (byGroup[it.group] || 0) + it.amount; });
+    const fixedTotal = items.reduce((s, it) => s + it.amount, 0);
     const ratio = cur.total > 0 ? Math.round((fixedTotal / cur.total) * 100) : 0;
     document.getElementById('fixed-ratio-badge').textContent = '支出全体の ' + ratio + '%';
 
-    const tiles = FIXED_CATEGORIES.map((name) => {
-      const v = cur.categories[name] || 0;
-      return `
+    const unit = '<span style="margin-left:2px;font-size:12px;font-weight:500;color:var(--text-sub);">円</span>';
+    document.getElementById('fixed-summary').innerHTML = FIXED_GROUPS.map((g) => `
         <div class="fixed-tile">
-          <span class="name">${escapeHtml(name)}</span>
-          <span class="amount">${fmt(v)}<span style="margin-left:2px;font-size:12px;font-weight:500;color:var(--text-sub);">円</span></span>
-        </div>`;
-    }).join('');
-    const totalTile = `
+          <span class="name">${escapeHtml(g.label)}</span>
+          <span class="amount">${fmt(byGroup[g.label] || 0)}${unit}</span>
+        </div>`).join('') + `
         <div class="fixed-tile total">
-          <span class="name">3カテゴリ合計</span>
-          <span class="amount">${fmt(fixedTotal)}<span style="margin-left:2px;font-size:12px;font-weight:500;color:var(--text-sub);">円</span></span>
+          <span class="name">固定費の合計</span>
+          <span class="amount">${fmt(fixedTotal)}${unit}</span>
         </div>`;
-    document.getElementById('fixed-summary').innerHTML = tiles + totalTile;
 
-    const items = Object.entries(cur.merchantsByCategory['固定費'] || {}).sort((a, b) => b[1] - a[1]);
-    document.getElementById('fixed-empty').classList.toggle('hidden', items.length > 0);
-    document.getElementById('fixed-item-list').innerHTML = items.map(([name, v]) =>
-      `<div class="fixed-item-row"><span>${escapeHtml(name)}</span><span class="amount">${fmt(v)}円</span></div>`
+    const sorted = [...items].sort((a, b) => b.amount - a.amount);
+    document.getElementById('fixed-empty').classList.toggle('hidden', sorted.length > 0);
+    document.getElementById('fixed-item-list').innerHTML = sorted.map((it) =>
+      `<div class="fixed-item-row"><span>${escapeHtml(it.name)}<span class="group">${escapeHtml(it.group)}</span></span><span class="amount">${fmt(it.amount)}円</span></div>`
     ).join('');
 
     const diffEl = document.getElementById('fixed-diff-notes');
     if (prev && prev.total > 0 && !isInProgress(state.year, state.month)) {
-      const curNames = new Set(Object.keys(cur.merchantsByCategory['固定費'] || {}));
-      const prevNames = new Set(Object.keys(prev.merchantsByCategory['固定費'] || {}));
-      const added = [...curNames].filter((n) => !prevNames.has(n));
-      const removed = [...prevNames].filter((n) => !curNames.has(n));
+      const prevItems = fixedItems(prev);
+      const curKeys = new Set(items.map((it) => it.key));
+      const prevKeys = new Set(prevItems.map((it) => it.key));
+      const added = items.filter((it) => !prevKeys.has(it.key)).map((it) => it.name);
+      const removed = prevItems.filter((it) => !curKeys.has(it.key)).map((it) => it.name);
       const lines = [];
-      if (added.length) {
-        lines.push('先月までなかった固定費: ' + added.map((n) => escapeHtml(n)).join('、'));
-      }
-      if (removed.length) {
-        lines.push('先月まであった固定費が今月は見当たりません: ' + removed.map((n) => escapeHtml(n)).join('、') + '（解約済みか確認してみてください）');
-      }
+      if (added.length) lines.push('先月までなかった固定費: ' + added.map((n) => escapeHtml(n)).join('、'));
+      if (removed.length) lines.push('先月まであった固定費が今月は見当たりません: ' + removed.map((n) => escapeHtml(n)).join('、') + '（解約済みか確認してみてください）');
       diffEl.innerHTML = lines.map((l) => `<p class="fixed-diff-note">${l}</p>`).join('');
     } else {
       diffEl.innerHTML = '';
@@ -863,25 +885,45 @@
 
   function renderCategories() {
     const cur = currentMonthData();
-    document.getElementById('merchant-sub').textContent = state.year + '年' + state.month + '月支払分・金額の大きい順';
+    document.getElementById('merchant-sub').textContent = state.year + '年' + state.month + '月支払分・金額の大きい順（カテゴリを押すと中分類の内訳）';
     if (!cur) return;
 
     const entries = Object.entries(cur.categories).sort((a, b) => b[1] - a[1]);
     document.getElementById('merchant-empty').classList.toggle('hidden', entries.length > 0);
+    if (!state.expandedCats) state.expandedCats = new Set();
 
     const max = entries.length ? entries[0][1] : 1;
-    document.getElementById('merchant-rows').innerHTML = entries.map(([name, v]) => {
-      const widthPct = (v / max * 70).toFixed(1);
+    const barRow = (cls, name, v, attrs) => {
+      const widthPct = Math.max(0, (v / max) * 70).toFixed(1);
       const share = cur.total > 0 ? Math.round((v / cur.total) * 100) : 0;
       return `
-        <div class="merchant-row">
-          <span class="merchant-name">${escapeHtml(name)}</span>
+        <div class="merchant-row ${cls}" ${attrs || ''}>
+          <span class="merchant-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
           <div class="merchant-bar-wrap">
             <span class="merchant-bar" style="width:${widthPct}%;"></span>
             <span class="merchant-value">${fmt(v)}円<span class="merchant-share">${share}%</span></span>
           </div>
         </div>`;
+    };
+    document.getElementById('merchant-rows').innerHTML = entries.map(([name, v]) => {
+      const open = state.expandedCats.has(name);
+      let html = barRow('cat-row' + (open ? ' open' : ''), name, v, `data-cat="${escapeHtml(name)}" role="button" tabindex="0" aria-expanded="${open}"`);
+      if (open) {
+        const subs = Object.entries((cur.subByCat || {})[name] || {}).sort((a, b) => b[1] - a[1]);
+        html += subs.map(([sub, sv]) => barRow('sub-row', sub, sv)).join('');
+      }
+      return html;
     }).join('');
+
+    document.querySelectorAll('#merchant-rows .cat-row').forEach((row) => {
+      const toggle = () => {
+        const name = row.dataset.cat;
+        if (state.expandedCats.has(name)) state.expandedCats.delete(name); else state.expandedCats.add(name);
+        renderCategories();
+      };
+      row.addEventListener('click', toggle);
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -905,34 +947,11 @@
     return monthIndex(y, m) > monthIndex(today.getFullYear(), today.getMonth() + 1);
   }
 
-  // 利用先名の表記ゆれを落とした「読みやすい名前」
-  //  - 全角→半角、括弧書き（（翌月買付分）〔ネット〕など）を除く
-  //  - 末尾の所在地（「東京都 渋谷区」「?千葉県」など）を除く
-  //  - 2語目以降の請求番号・URL（「P46AF39499 684488」「WWW.AMAZON.CO」など）を除く
-  function cleanMerchant(s) {
-    let t = String(s || '').normalize('NFKC')
-      .replace(/\s?([\u3099\u309A])/g, '$1').normalize('NFC')   // 半角の濁点「ﾄﾞ」「ト゛」を「ド」に
-      .replace(/[(\[〔【「][^)\]〕】」]*[)\]〕】」]/g, ' ')
-      .replace(/\s+/g, ' ').trim();
-    t = t.replace(/\s+\?*\s*(北海道|東京都|京都府|大阪府|\S{2,3}県)(\s.*)?$/, '');
-    const words = t.split(' ');
-    const isCode = (w) => /\d{3,}/.test(w) || /\.\w{2,}/.test(w)               // 請求番号・電話番号・URL
-      || (/^[A-Z0-9]{5,}$/i.test(w) && (w.match(/\d/g) || []).length >= 2);    // 「P3E42195BA」のような英数字の符号
-    t = [words[0], ...words.slice(1).filter((w) => !isCode(w))].join(' ');
-    t = t.replace(/([ァ-ヶ])-(?=[ァ-ヶ])/g, '$1ー');
-    return t.replace(/\s*\?+$/, '').trim() || String(s || '').trim();
-  }
-  // 同じ利用先を月をまたいでまとめるためのキー（例：「ＳＢＩ証券投信積立サ－ビス（翌月買付分）」＝「ＳＢＩ証券投信積立サービス」）
-  function merchantKey(s) {
-    return cleanMerchant(s).replace(/\s+/g, '').replace(/[-‐−ｰ]/g, 'ー').toUpperCase();
-  }
-  function merchantLabel(s) {
-    const t = cleanMerchant(s);
-    return t.length > 22 ? t.slice(0, 21) + '…' : t;
-  }
-  function merchantKind(merchant, category) {
+  // 利用先名の表記ゆれをまとめる cleanMerchant / merchantKey / merchantLabel は supabase-client.js にある
+  function merchantKind(merchant, category, subcategory) {
     const n = String(merchant || '').normalize('NFKC');
     if (INVEST_CATEGORIES.includes(category) || INVEST_RE.test(n)) return 'invest';
+    if (subcategory === '年会費・手数料' && /年会費|会費|消費税/.test(n)) return 'annual';
     if (ANNUAL_RE.test(n)) return 'annual';
     return null;
   }
@@ -975,10 +994,11 @@
     const prior = [];
     for (let i = 1; i <= ONEOFF_LOOKBACK; i++) prior.push(aggAt(idx - i));
     const canDetectOneoff = prior.filter((p) => p.total > 0).length >= 3;
-    const special = { invest: [], annual: [], oneoff: [] };
+    const special = { invest: [], annual: [], oneoff: [], manual: [] };
     const daily = {};
     Object.entries(a.merchants).forEach(([k, m]) => {
-      if (m.kind === 'invest') special.invest.push(m);
+      if (m.kind === 'manual') special.manual.push(m);
+      else if (m.kind === 'invest') special.invest.push(m);
       else if (m.kind === 'annual') special.annual.push(m);
       else if (canDetectOneoff && m.amount >= ONEOFF_MIN && prior.every((p) => !p.merchants[k] || p.merchants[k].amount <= 0)) special.oneoff.push(m);
       else daily[k] = m;
@@ -995,7 +1015,8 @@
       investTotal: sum(special.invest),
       annualTotal: sum(special.annual),
       oneoffTotal: sum(special.oneoff),
-      specialTotal: sum(special.invest) + sum(special.annual) + sum(special.oneoff),
+      manualTotal: sum(special.manual),
+      specialTotal: sum(special.invest) + sum(special.annual) + sum(special.oneoff) + sum(special.manual),
       specialKeys: new Set(Object.keys(a.merchants).filter((k) => !daily[k])),
     };
     classifyCache.set(idx, result);
@@ -1068,7 +1089,7 @@
     };
     const subs = [];
     Object.entries(cur.merchants).forEach(([k, m]) => {
-      if (m.kind === 'invest' || m.category === '食費' || m.count > 2) return;
+      if (m.kind === 'invest' || m.kind === 'manual' || m.category === '食費' || m.count > 2) return;
       const past = hist.map((h) => h.merchants[k]).filter(Boolean);
       if (past.length < 2 || past.some((p) => p.count > 2)) return;
       if (!isStable([m.amount, ...past.map((p) => p.amount)])) return;
@@ -1078,7 +1099,7 @@
     });
     const stopped = [];
     Object.entries(hist[0].merchants).forEach(([k, m]) => {
-      if (inProgress || cur.merchants[k] || m.kind === 'invest' || m.category === '食費') return;
+      if (inProgress || cur.merchants[k] || m.kind === 'invest' || m.kind === 'manual' || m.category === '食費') return;
       const past = hist.map((h) => h.merchants[k]);
       if (past.some((p) => !p || p.count > 2)) return;
       if (!isStable(past.map((p) => p.amount))) return;
@@ -1107,11 +1128,13 @@
         : { score: Math.abs(r.d) * (r.d > 0 ? 1 : 0.6), tone: r.d > 0 ? 'bad' : 'good',
             html: `「${escapeHtml(r.cat)}」がいつもより${amountWord(r.d)}です。${why}` });
     });
-    if (c.special.oneoff.length) {
-      const sorted = [...c.special.oneoff].sort((p, q) => q.amount - p.amount);
-      const more = sorted.length > 1 ? `ほか${sorted.length - 1}件、合計${fmt(c.oneoffTotal)}円` : '';
-      candidates.push({ score: c.oneoffTotal * 0.8, tone: 'neutral',
-        html: `一度きりの大きな支払い：${escapeHtml(sorted[0].name)} ${fmt(sorted[0].amount)}円${more ? '（' + more + '）' : ''}。ふだんの生活費とは分けて見ています。` });
+    const oneoffLike = [...c.special.oneoff, ...c.special.manual];
+    if (oneoffLike.length) {
+      const sorted = oneoffLike.sort((p, q) => q.amount - p.amount);
+      const oneoffSum = oneoffLike.reduce((s, m) => s + m.amount, 0);
+      const more = sorted.length > 1 ? `ほか${sorted.length - 1}件、合計${fmt(oneoffSum)}円` : '';
+      candidates.push({ score: oneoffSum * 0.8, tone: 'neutral',
+        html: `特別な出費：${escapeHtml(sorted[0].name)} ${fmt(sorted[0].amount)}円${more ? '（' + more + '）' : ''}。ふだんの生活費とは分けて見ています。` });
     }
     subs.filter((x) => x.before).forEach((x) => candidates.push({ score: 30000, tone: 'bad',
       html: `${escapeHtml(x.name)}が${fmt(x.before)}円→<strong>${fmt(x.amount)}円</strong>に上がっています。値上げやプラン変更がないか確認してみてください。` }));
@@ -1134,6 +1157,7 @@
     if (c.investTotal > 0) rows.push(['投資・積立', -c.investTotal]);
     if (c.annualTotal > 0) rows.push(['年1回の支払い', -c.annualTotal]);
     if (c.oneoffTotal > 0) rows.push(['一度きりの大きな支払い', -c.oneoffTotal]);
+    if (c.manualTotal > 0) rows.push(['特別な出費（自分で指定）', -c.manualTotal]);
     const breakdown = rows.map(([label, v]) => `<li><span>${label}</span><span>${v < 0 ? '−' : ''}${fmt(Math.abs(v))}円</span></li>`).join('') +
       `<li class="total"><span>ふだんの生活費${hasBase ? `（いつもの月 ${fmt(usualDaily)}円）` : ''}</span><span>${fmt(c.dailyTotal)}円</span></li>`;
     sections.push(['内訳', [`<ul class="insight-breakdown">${breakdown}</ul>`]]);
@@ -1183,6 +1207,7 @@
     if (c.special.invest.length) s4.push(`投資・積立：${listText(c.special.invest)}（将来に回したお金なので、生活費とは分けています）`);
     if (c.special.annual.length) s4.push(`年1回の支払い：${listText(c.special.annual)}（1か月あたり${approxYen(c.annualTotal / 12)}）`);
     if (c.special.oneoff.length) s4.push(`一度きりの大きな支払い：${listText(c.special.oneoff)}（過去${ONEOFF_LOOKBACK}か月になかった1万円以上の支払い）`);
+    if (c.special.manual.length) s4.push(`自分で指定した特別な出費：${listText(c.special.manual)}（明細一覧の「特別な出費」ボタン）`);
     if (s4.length) sections.push(['特別な出費', s4]);
 
     // 定期的な支払い

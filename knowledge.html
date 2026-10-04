@@ -48,7 +48,17 @@
   .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-size: 12px; font-weight: 700; color: var(--text-muted); }
 
   .col-keyword { flex: 1; min-width: 180px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .col-category { width: 160px; flex-shrink: 0; }
+  .col-category { width: 160px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
+  .sub-panel-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid #ECE6D8; }
+  .sub-panel-row:first-child { border-top: none; }
+  .sub-panel-row .cat-name { width: 160px; flex-shrink: 0; font-weight: 700; font-size: 14px; padding-top: 4px; }
+  .sub-chips { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .sub-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 12px; background: #F2EEE4; font-size: 13px; }
+  .sub-chip button { border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .sub-add { display: inline-flex; gap: 4px; }
+  .sub-add input[type=text] { width: 140px; height: 28px; }
+  .migrate-banner { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 14px 16px; border-radius: 12px; background: #EAF1FB; font-size: 14px; color: var(--text-sub); }
+  .migrate-banner a { font-weight: 700; color: #1F4E8C; }
   .col-source { width: 150px; flex-shrink: 0; }
   .col-save { width: 90px; flex-shrink: 0; text-align: right; font-size: 12px; }
 
@@ -132,6 +142,11 @@
 
     <p id="error-banner" class="error-banner hidden"></p>
 
+    <div class="migrate-banner">
+      <span>カテゴリを「大分類＋中分類」の構成に整理するページです。利用先ごとの振り分け案を確認してから、まとめて反映できます。</span>
+      <a href="./categorize.html">カテゴリ整理を開く →</a>
+    </div>
+
     <div class="toolbar">
       <input type="text" id="search-input" placeholder="利用先キーワードで検索">
       <select id="category-filter"></select>
@@ -180,6 +195,12 @@
       <input type="text" id="new-category-input" placeholder="新しいカテゴリ名">
       <button type="button" class="btn-mini btn-primary" id="new-category-save">カテゴリを追加</button>
     </div>
+
+    <h2 class="section-title">中分類</h2>
+    <p class="lead">大分類ごとの中分類です。明細一覧・手入力・ナレッジで、大分類を選んだあとに選べます。使われている中分類は削除できません。</p>
+    <section class="panel">
+      <div id="sub-panel"></div>
+    </section>
   </main>
 
 <script>
@@ -187,6 +208,7 @@
     session: null,
     rules: [],
     categories: [],
+    subcategories: [],
     search: '',
     sourceFilter: 'all',
     categoryFilter: 'all',
@@ -285,7 +307,8 @@
             <button type="button" class="btn-mini btn-primary" data-action="add-category" data-id="${r.id}">追加</button>
             <button type="button" class="btn-mini" data-action="cancel-category" data-id="${r.id}">やめる</button>
           </div>`
-        : `<select data-id="${r.id}">${categoryOptionsHtml(r.category_name)}</select>`;
+        : `<select data-id="${r.id}">${categoryOptionsHtml(r.category_name)}</select>` +
+          `<select data-sub-id="${r.id}">${subcategoryOptionsHtml(state.subcategories, r.category_name, r.subcategory_name || '')}</select>`;
 
       return `
         <div class="row" data-row-id="${r.id}">
@@ -307,8 +330,14 @@
           state.newCategoryDraftName = '';
           renderRows();
         } else {
-          saveRule(sel.dataset.id, sel.value);
+          saveRule(sel.dataset.id, sel.value, null);
         }
+      });
+    });
+    rowsEl.querySelectorAll('select[data-sub-id]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const rule = state.rules.find((r) => r.id === sel.dataset.subId);
+        if (rule) saveRule(rule.id, rule.category_name, sel.value || null);
       });
     });
     rowsEl.querySelectorAll('[data-field="new-category"]').forEach((input) => {
@@ -339,7 +368,7 @@
     state.creatingCategoryFor = null;
     state.newCategoryDraftName = '';
     showError(null);
-    await saveRule(id, data.name);
+    await saveRule(id, data.name, null);
   }
 
   function cancelNewCategoryForRule() {
@@ -348,7 +377,7 @@
     renderRows();
   }
 
-  async function saveRule(id, category) {
+  async function saveRule(id, category, subcategory) {
     const rule = state.rules.find((r) => r.id === id);
     if (!rule) return;
 
@@ -358,7 +387,7 @@
     // 自分でここから分類を確定させた時点で、そのキーワードは人間確定（source: 'human'）とみなす。
     const { error } = await supabaseClient
       .from('merchant_categories')
-      .update({ category_name: category, source: 'human' })
+      .update({ category_name: category, subcategory_name: subcategory || null, source: 'human' })
       .eq('id', id);
 
     if (error) {
@@ -370,6 +399,7 @@
 
     showError(null);
     rule.category_name = category;
+    rule.subcategory_name = subcategory || null;
     rule.source = 'human';
     state.saveState[id] = 'ok';
     renderRows();
@@ -553,6 +583,7 @@
       const { error: e3 } = await supabaseClient.from('categories').delete().eq('id', categoryId);
       if (e3) { showError('カテゴリ削除エラー: ' + e3.message); return; }
       state.categories = state.categories.filter((c) => c.id !== categoryId);
+      await moveSubcategories(oldName, newName);
     } else {
       const { error: e1 } = await supabaseClient.from('categories').update({ name: newName }).eq('id', categoryId);
       if (e1) { showError('カテゴリ名の変更エラー: ' + e1.message); return; }
@@ -561,6 +592,7 @@
       const { error: e3 } = await supabaseClient.from('card_statements').update({ category: newName }).eq('category', oldName);
       if (e3) { showError('明細の更新エラー: ' + e3.message); return; }
       cat.name = newName;
+      await moveSubcategories(oldName, newName);
     }
 
     showError(null);
@@ -587,10 +619,87 @@
 
   async function loadCategories() {
     try {
-      state.categories = await fetchCategories();
+      [state.categories, state.subcategories] = await Promise.all([fetchCategories(), fetchSubcategories()]);
     } catch (e) {
       showError('カテゴリ読み込みエラー: ' + e.message);
     }
+  }
+
+  // --- 中分類パネル ---
+  // 大分類の名前変更・統合に合わせて、その中分類も付け替える（同名の中分類が既にあれば元の方を消す）
+  async function moveSubcategories(oldName, newName) {
+    const moving = state.subcategories.filter((s) => s.category_name === oldName);
+    for (const s of moving) {
+      const exists = state.subcategories.some((t) => t.category_name === newName && t.name === s.name);
+      const { error } = exists
+        ? await supabaseClient.from('subcategories').delete().eq('id', s.id)
+        : await supabaseClient.from('subcategories').update({ category_name: newName }).eq('id', s.id);
+      if (error) console.error('subcategories move failed:', error);
+    }
+    try { state.subcategories = await fetchSubcategories(); } catch (e) { /* 表示だけなので無視 */ }
+    renderSubPanel();
+  }
+
+  function renderSubPanel() {
+    const el = document.getElementById('sub-panel');
+    if (!state.categories.length) { el.innerHTML = '<div class="empty">カテゴリがありません。</div>'; return; }
+    el.innerHTML = state.categories.map((c) => {
+      const chips = state.subcategories.filter((s) => s.category_name === c.name).map((s) =>
+        `<span class="sub-chip">${escapeHtml(s.name)}<button type="button" data-action="delete-sub" data-id="${s.id}" aria-label="${escapeHtml(s.name)}を削除">×</button></span>`
+      ).join('');
+      return `
+        <div class="sub-panel-row">
+          <span class="cat-name">${escapeHtml(c.name)}</span>
+          <div class="sub-chips">
+            ${chips}
+            <span class="sub-add">
+              <input type="text" data-sub-input="${escapeHtml(c.name)}" placeholder="中分類を追加">
+              <button type="button" class="btn-mini" data-action="add-sub" data-cat="${escapeHtml(c.name)}">追加</button>
+            </span>
+          </div>
+        </div>`;
+    }).join('');
+    el.querySelectorAll('[data-action="add-sub"]').forEach((btn) => {
+      btn.addEventListener('click', () => addSubcategory(btn.dataset.cat));
+    });
+    el.querySelectorAll('[data-sub-input]').forEach((input) => {
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addSubcategory(input.dataset.subInput); } });
+    });
+    el.querySelectorAll('[data-action="delete-sub"]').forEach((btn) => {
+      btn.addEventListener('click', () => deleteSubcategory(btn.dataset.id));
+    });
+  }
+
+  async function addSubcategory(categoryName) {
+    const input = [...document.querySelectorAll('[data-sub-input]')].find((i) => i.dataset.subInput === categoryName);
+    const name = input ? input.value.trim() : '';
+    if (!name) return;
+    const { data, error } = await createSubcategory(categoryName, name);
+    if (error) { showError('中分類の追加エラー: ' + error.message); return; }
+    if (!state.subcategories.some((s) => s.id === data.id)) state.subcategories.push(data);
+    showError(null);
+    renderSubPanel();
+    renderRows();
+  }
+
+  async function deleteSubcategory(id) {
+    const sub = state.subcategories.find((s) => s.id === id);
+    if (!sub) return;
+    const [ruleRes, stmtRes] = await Promise.all([
+      supabaseClient.from('merchant_categories').select('id', { count: 'exact', head: true }).eq('category_name', sub.category_name).eq('subcategory_name', sub.name),
+      supabaseClient.from('card_statements').select('id', { count: 'exact', head: true }).eq('category', sub.category_name).eq('subcategory', sub.name),
+    ]);
+    if (ruleRes.error || stmtRes.error) { showError('削除前の確認でエラーが発生しました: ' + (ruleRes.error || stmtRes.error).message); return; }
+    if ((ruleRes.count ?? 0) > 0 || (stmtRes.count ?? 0) > 0) {
+      showError(`中分類「${sub.name}」はまだナレッジ${ruleRes.count ?? 0}件・明細${stmtRes.count ?? 0}件で使われているため削除できません。`);
+      return;
+    }
+    const { error } = await supabaseClient.from('subcategories').delete().eq('id', id);
+    if (error) { showError('中分類の削除エラー: ' + error.message); return; }
+    state.subcategories = state.subcategories.filter((s) => s.id !== id);
+    showError(null);
+    renderSubPanel();
+    renderRows();
   }
 
   async function loadRules() {
@@ -600,7 +709,7 @@
 
     const { data, error } = await supabaseClient
       .from('merchant_categories')
-      .select('id, keyword, category_name, priority, source')
+      .select('id, keyword, category_name, subcategory_name, priority, source')
       .order('keyword', { ascending: true });
 
     state.loading = false;
@@ -614,6 +723,7 @@
     }
     renderRows();
     renderCategoryPanel();
+    renderSubPanel();
   }
 
   let searchDebounce = null;
@@ -640,7 +750,7 @@
     const matches = state.rules.filter((r) => r.keyword && r.keyword.length > 0 && merchant.includes(r.keyword));
     if (matches.length === 0) return null;
     matches.sort((a, b) => (b.priority - a.priority) || (b.keyword.length - a.keyword.length));
-    return { category: matches[0].category_name, source: matches[0].source };
+    return { category: matches[0].category_name, subcategory: matches[0].subcategory_name || null, source: matches[0].source };
   }
 
   async function reapplyKnowledge() {
@@ -652,7 +762,7 @@
 
     const { data: targets, error } = await supabaseClient
       .from('card_statements')
-      .select('id, merchant, category, category_source')
+      .select('id, merchant, category, subcategory, category_source')
       .or('category_source.is.null,category_source.eq.ai');
 
     if (error) {
@@ -666,8 +776,8 @@
     for (const row of targets ?? []) {
       const resolved = resolveWithCurrentRules(row.merchant);
       if (!resolved) continue;
-      if (resolved.category === row.category && resolved.source === row.category_source) continue;
-      updates.push({ id: row.id, category: resolved.category, category_source: resolved.source });
+      if (resolved.category === row.category && (resolved.subcategory || null) === (row.subcategory || null) && resolved.source === row.category_source) continue;
+      updates.push({ id: row.id, category: resolved.category, subcategory: resolved.subcategory, category_source: resolved.source });
     }
 
     if (updates.length === 0) {
@@ -688,7 +798,7 @@
         const item = updates[idx++];
         const { error: upErr } = await supabaseClient
           .from('card_statements')
-          .update({ category: item.category, category_source: item.category_source })
+          .update({ category: item.category, subcategory: item.subcategory, category_source: item.category_source })
           .eq('id', item.id);
         if (upErr) errCount++; else okCount++;
       }

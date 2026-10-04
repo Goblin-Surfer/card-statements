@@ -55,10 +55,11 @@
   .col-date { width: 64px; flex-shrink: 0; font-size: 13px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
   .col-card { width: 160px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; }
   .col-merchant { width: 180px; flex-shrink: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .col-category { width: 140px; flex-shrink: 0; }
+  .col-category { width: 140px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
+  .col-category .sub-label { font-size: 12px; color: var(--text-muted); }
   .col-amount { width: 100px; flex-shrink: 0; text-align: right; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .col-memo { flex: 1; min-width: 140px; }
-  .col-status { width: 260px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .col-status { width: 330px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
@@ -75,6 +76,8 @@
   .chip-toggle.active { background: #0B6B57; color: #FFFFFF; border-color: #0B6B57; }
 
   button.btn-mini.btn-shared-on { background: #D7F0EC; border-color: #3FA98C; color: #0B6B57; }
+  button.btn-mini.btn-special-on { background: #FDECC8; border-color: #E0A43A; color: #8A5A00; }
+  .chip-toggle.special.active { background: #8A5A00; border-color: #8A5A00; }
 
   button.btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; }
   button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
@@ -148,6 +151,7 @@
       <select id="card-filter"></select>
       <div class="tabs" id="status-tabs"></div>
       <button type="button" class="chip-toggle" id="shared-filter-toggle">清算対象のみ</button>
+      <button type="button" class="chip-toggle special" id="special-filter-toggle">特別な出費のみ</button>
       <span class="count" id="row-count"></span>
     </div>
 
@@ -166,7 +170,7 @@
       <div id="empty" class="empty hidden">この条件に一致する明細はありません。</div>
     </section>
 
-    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「AI推定（要確認）」はAIが推測しただけでまだ人間が確認していないカテゴリです。合っていればそのまま保存、違っていれば直してから保存してください（一度保存すれば次回から確定扱いになります）。「要確認」は金額や日付の形式が想定外で自動取込できなかった明細です。内容を直して「確定」を押すと集計対象になります。</p>
+    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「AI推定（要確認）」はAIが推測しただけでまだ人間が確認していないカテゴリです。合っていればそのまま保存、違っていれば直してから保存してください（一度保存すれば次回から確定扱いになります）。「要確認」は金額や日付の形式が想定外で自動取込できなかった明細です。内容を直して「確定」を押すと集計対象になります。旅行や家電など一度きりの支払いは「特別な出費」を押しておくと、分析で「ふだんの生活費」と分けて見られます。</p>
   </main>
 
 <script>
@@ -177,11 +181,13 @@
     session: null,
     cards: [],
     categories: [],
+    subcategories: [],
     year: today.getFullYear(),
     month: today.getMonth() + 1, // 1-12
     cardFilter: 'all',
     statusFilter: 'all',
     sharedOnly: false,
+    specialOnly: false,
     rows: [],
     loading: true,
     editingIds: new Set(),
@@ -193,6 +199,7 @@
   const cardFilterEl = document.getElementById('card-filter');
   const statusTabsEl = document.getElementById('status-tabs');
   const sharedFilterToggle = document.getElementById('shared-filter-toggle');
+  const specialFilterToggle = document.getElementById('special-filter-toggle');
   const rowCountEl = document.getElementById('row-count');
   const loadingRow = document.getElementById('loading-row');
   const rowsEl = document.getElementById('rows');
@@ -259,7 +266,8 @@
       rowCountEl.textContent = '';
     } else {
       const total = state.rows.reduce((sum, r) => sum + Number(r.amount), 0);
-      const label = state.sharedOnly ? '清算対象の合計' : '合計';
+      const label = state.sharedOnly && state.specialOnly ? '清算対象かつ特別な出費の合計'
+        : state.sharedOnly ? '清算対象の合計' : state.specialOnly ? '特別な出費の合計' : '合計';
       rowCountEl.innerHTML = state.rows.length + '件・' + label + ' <strong style="color:var(--text);font-size:15px;">'
         + total.toLocaleString('ja-JP') + '円</strong>';
     }
@@ -270,7 +278,7 @@
       const needsCategory = !r.category;
       const needsAiConfirm = !!r.category && r.category_source === 'ai';
       const editing = needsReview || needsCategory || needsAiConfirm || state.editingIds.has(r.id);
-      const edit = state.edits[r.id] || { category: r.category || '', memo: r.memo || '' };
+      const edit = state.edits[r.id] || { category: r.category || '', subcategory: r.subcategory || '', memo: r.memo || '' };
 
       const dateLabel = r.used_date.slice(5).replace('-', '/');
 
@@ -283,9 +291,11 @@
             <button type="button" class="btn-mini" data-action="cancel-category" data-id="${r.id}">やめる</button>
           </div>`;
       } else if (editing) {
-        categoryCell = `<select data-field="category" data-id="${r.id}">${categoryOptionsHtml(edit.category)}</select>`;
+        categoryCell = `<select data-field="category" data-id="${r.id}">${categoryOptionsHtml(edit.category)}</select>` +
+          (edit.category ? `<select data-field="subcategory" data-id="${r.id}">${subcategoryOptionsHtml(state.subcategories, edit.category, edit.subcategory)}</select>` : '');
       } else {
-        categoryCell = `<span>${escapeHtml(r.category || '')}</span>`;
+        categoryCell = `<span>${escapeHtml(r.category || '')}</span>` +
+          (r.subcategory ? `<span class="sub-label">${escapeHtml(r.subcategory)}</span>` : '');
       }
 
       const memoCell = editing
@@ -320,6 +330,9 @@
       const sharedBtn = r.is_shared
         ? `<button type="button" class="btn-mini btn-shared-on" data-action="toggle-shared" data-id="${r.id}">✓ 清算対象</button>`
         : `<button type="button" class="btn-mini" data-action="toggle-shared" data-id="${r.id}">清算対象にする</button>`;
+      const specialBtn = r.is_special
+        ? `<button type="button" class="btn-mini btn-special-on" data-action="toggle-special" data-id="${r.id}" title="分析で「ふだんの生活費」と分けて扱います">✓ 特別な出費</button>`
+        : `<button type="button" class="btn-mini" data-action="toggle-special" data-id="${r.id}" title="旅行・家電など一度きりの支払いに付けると、分析で「ふだんの生活費」と分けて扱います">特別な出費</button>`;
 
       return `
         <div class="row ${rowClass}" data-row-id="${r.id}">
@@ -333,6 +346,7 @@
             ${categoryBadge}
             <span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${pillLabel}</span>
             ${sharedBtn}
+            ${specialBtn}
             ${actionCell}
           </span>
         </div>`;
@@ -343,7 +357,7 @@
 
   function editsFor(id) {
     const row = state.rows.find((r) => r.id === id);
-    const current = state.edits[id] || { category: row.category || '', memo: row.memo || '' };
+    const current = state.edits[id] || { category: row.category || '', subcategory: row.subcategory || '', memo: row.memo || '' };
     state.edits[id] = current;
     return current;
   }
@@ -362,10 +376,14 @@
           current.creatingCategory = true;
           current.newCategoryName = '';
         } else {
+          if (current.category !== sel.value) current.subcategory = '';
           current.category = sel.value;
         }
         renderRows();
       });
+    });
+    rowsEl.querySelectorAll('select[data-field="subcategory"]').forEach((sel) => {
+      sel.addEventListener('change', () => { editsFor(sel.dataset.id).subcategory = sel.value; });
     });
 
     rowsEl.querySelectorAll('[data-field="new-category"]').forEach((input) => {
@@ -390,11 +408,14 @@
     rowsEl.querySelectorAll('[data-action="toggle-shared"]').forEach((btn) => {
       btn.addEventListener('click', () => toggleShared(btn.dataset.id));
     });
+    rowsEl.querySelectorAll('[data-action="toggle-special"]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleSpecial(btn.dataset.id));
+    });
     rowsEl.querySelectorAll('[data-action="edit"]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.id;
         const row = state.rows.find((r) => r.id === id);
-        state.edits[id] = { category: row.category || '', memo: row.memo || '' };
+        state.edits[id] = { category: row.category || '', subcategory: row.subcategory || '', memo: row.memo || '' };
         state.editingIds.add(id);
         renderRows();
       });
@@ -460,12 +481,29 @@
     }
   }
 
+  async function toggleSpecial(id) {
+    const row = state.rows.find((r) => r.id === id);
+    if (!row) return;
+    const next = !row.is_special;
+    row.is_special = next;
+    renderRows();
+    const { error } = await supabaseClient.from('card_statements').update({ is_special: next }).eq('id', id);
+    if (error) {
+      row.is_special = !next;
+      showError('更新エラー: ' + error.message);
+      renderRows();
+    } else if (state.specialOnly) {
+      await loadRows();
+    }
+  }
+
   async function saveRow(id, confirm) {
     const edit = state.edits[id] || {};
     const category = edit.category || null;
     // 人間がこの画面で保存した時点で、そのカテゴリは確定（category_source: 'human'）とみなす。
     // これにより、AIが推測しただけで未確認だった行も、一度保存すれば「要確認」表示から外れる。
-    const patch = { category, memo: edit.memo || null, category_source: category ? 'human' : null };
+    const subcategory = category ? (edit.subcategory || null) : null;
+    const patch = { category, subcategory, memo: edit.memo || null, category_source: category ? 'human' : null };
     if (confirm) patch.status = 'confirmed';
 
     const { error } = await supabaseClient.from('card_statements').update(patch).eq('id', id);
@@ -478,7 +516,7 @@
       const row = state.rows.find((r) => r.id === id);
       if (row) {
         const { error: ruleError } = await supabaseClient.from('merchant_categories').upsert(
-          { user_id: state.session.user.id, keyword: row.merchant, category_name: category, priority: 0, source: 'human' },
+          { user_id: state.session.user.id, keyword: row.merchant, category_name: category, subcategory_name: subcategory, priority: 0, source: 'human' },
           { onConflict: 'user_id,keyword' },
         );
         // ナレッジの保存に失敗しても明細自体の保存は成立しているので、画面には出さずログのみに残す
@@ -513,6 +551,7 @@
     if (state.cardFilter !== 'all') query = query.eq('card_id', state.cardFilter);
     if (state.statusFilter !== 'all') query = query.eq('status', state.statusFilter);
     if (state.sharedOnly) query = query.eq('is_shared', true);
+    if (state.specialOnly) query = query.eq('is_special', true);
 
     const { data, error } = await query;
     state.loading = false;
@@ -526,6 +565,12 @@
     }
     renderRows();
   }
+
+  specialFilterToggle.addEventListener('click', () => {
+    state.specialOnly = !state.specialOnly;
+    specialFilterToggle.classList.toggle('active', state.specialOnly);
+    loadRows();
+  });
 
   sharedFilterToggle.addEventListener('click', () => {
     state.sharedOnly = !state.sharedOnly;
@@ -546,7 +591,7 @@
 
   async function loadCategories() {
     try {
-      state.categories = await fetchCategories();
+      [state.categories, state.subcategories] = await Promise.all([fetchCategories(), fetchSubcategories()]);
     } catch (e) {
       showError('カテゴリ読み込みエラー: ' + e.message);
     }

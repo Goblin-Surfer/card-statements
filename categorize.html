@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="./favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<title>カテゴリ整理 | カード利用明細</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./supabase-client.js"></script>
+<style>
+  :root {
+    --bg: #F5F2EA; --card: #FFFFFF; --border: #DDD6C8; --border-light: #D9D2C3;
+    --text: #211F1A; --text-sub: #4A463D; --text-muted: #6B665A;
+    --blue: #2A78D6; --error-bg: #FBE1DD; --error-text: #8C2E22;
+    --good: #006300; --bad: #D03B3B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif; }
+  button, input, select { font-family: inherit; }
+  a { color: var(--text-sub); }
+  a:hover { color: var(--text); }
+
+  header { box-sizing: border-box; padding: 0 24px; height: 64px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #FFFFFF; border-bottom: 1px solid var(--border); }
+  header .brand { font-size: 18px; font-weight: 700; margin-right: 24px; color: var(--text); text-decoration: none; cursor: pointer; }
+  header .brand:hover { color: var(--blue); }
+  nav { display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap; }
+  nav a { display: flex; align-items: center; padding: 0 12px; height: 64px; font-size: 14px; font-weight: 500; text-decoration: none; color: var(--text-sub); border-bottom: 3px solid transparent; white-space: nowrap; }
+  nav a.active { color: var(--text); font-weight: 700; border-bottom-color: var(--blue); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  h2 { margin: 0; font-size: 16px; font-weight: 700; }
+  p.lead { margin: 0; font-size: 13px; line-height: 1.7; color: var(--text-muted); }
+
+  section.panel { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+  section.table-panel { padding: 0; overflow: hidden; gap: 0; }
+
+  .tree { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .tree-item { padding: 10px 12px; background: var(--bg); border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .tree-item strong { display: block; font-size: 14px; color: var(--text); }
+  .tree-item span { color: var(--text-sub); }
+
+  .toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 4px; padding: 4px; background: #E7E1D3; border-radius: 12px; flex-wrap: wrap; }
+  .tabs button { min-height: 34px; padding: 0 12px; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; background: transparent; color: var(--text-sub); }
+  .tabs button.active { background: #211F1A; color: #FFFFFF; }
+  .toolbar input[type=text] { width: 220px; }
+  .count { margin-left: auto; font-size: 13px; color: var(--text-muted); }
+
+  select, input[type=text] { height: 32px; padding: 0 8px; border: 1.5px solid var(--border-light); border-radius: 8px; background: #FFFFFF; font-size: 13px; }
+
+  .row { display: flex; align-items: center; gap: 12px; padding: 9px 20px; border-top: 1px solid #ECE6D8; }
+  .row.head { border-top: none; border-bottom: 1px solid #C9C2B2; font-size: 12px; font-weight: 700; color: var(--text-muted); background: #FBFAF6; }
+  .row.changed { background: #FFFBF0; }
+  .col-merchant { flex: 1; min-width: 160px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-count { width: 50px; text-align: right; font-size: 13px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+  .col-amount { width: 96px; text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .col-old { width: 110px; font-size: 13px; color: var(--text-muted); }
+  .col-new { width: 360px; display: flex; gap: 6px; }
+  .col-new select { flex: 1; min-width: 0; }
+  .badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; font-size: 11px; font-weight: 700; background: #FDECC8; color: #8A5A00; vertical-align: 1px; }
+  .badge.edited { background: #DCEEFB; color: #1C5A8A; }
+
+  .summary-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .summary-table th, .summary-table td { padding: 6px 4px; border-bottom: 1px solid #ECE6D8; text-align: right; }
+  .summary-table th:first-child, .summary-table td:first-child { text-align: left; }
+  .summary-table th { font-size: 12px; color: var(--text-muted); }
+
+  .apply-box { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  button.btn { min-height: 40px; padding: 0 18px; border: 1px solid var(--border-light); border-radius: 10px; background: #FFFFFF; color: var(--text-sub); font-size: 14px; font-weight: 700; cursor: pointer; }
+  button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; }
+  button.btn-danger { border: none; background: #B4382B; color: #FFFFFF; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .status { font-size: 13px; line-height: 1.7; color: var(--text-sub); white-space: pre-line; }
+  .status.ok { color: var(--good); }
+  .status.err { color: var(--error-text); }
+
+  .error-banner { padding: 12px 14px; background: var(--error-bg); color: var(--error-text); border-radius: 10px; font-size: 13px; line-height: 1.6; }
+  .empty { padding: 32px 20px; text-align: center; font-size: 14px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+
+  @media (max-width: 680px) {
+    header { height: auto; min-height: 56px; padding: 8px 14px; flex-wrap: nowrap; }
+    header .brand { font-size: 15px; margin-right: 10px; flex-shrink: 0; }
+    nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav a { height: 40px; padding: 0 10px; font-size: 13px; }
+    main { padding: 16px 12px 40px; gap: 12px; }
+    h1 { font-size: 19px; }
+    section.panel { padding: 14px 14px; }
+    .toolbar { flex-direction: column; align-items: stretch; }
+    .toolbar input[type=text] { width: 100%; }
+    .count { margin-left: 0; }
+    .row.head { display: none; }
+    .row { flex-wrap: wrap; padding: 12px 14px; gap: 6px; }
+    .col-merchant { flex: 1 1 100%; font-weight: 700; white-space: normal; }
+    .col-count, .col-amount, .col-old { width: auto; text-align: left; }
+    .col-new { flex: 1 1 100%; width: auto; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <a href="./list.html" class="brand">カード利用明細</a>
+    <nav aria-label="メイン">
+      <a href="./list.html">明細一覧</a>
+      <a href="./input.html">手入力</a>
+      <a href="./analysis.html">分析</a>
+      <a href="./knowledge.html" class="active" aria-current="page">ナレッジ</a>
+      <a href="./cards.html">カード設定</a>
+      <a href="./logs.html">取得ログ</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1>カテゴリ整理</h1>
+    <p class="lead">カテゴリを「大分類＋中分類」の構成に整理します。下の一覧は、利用先ごとの振り分け案です（同じお店の表記ゆれはまとめてあります）。内容を確認し、違うものは右のプルダウンで直してから、いちばん下の「この内容で反映する」を押してください。反映するまで、明細やナレッジは一切変わりません。選んだ内容はこのブラウザに一時保存されるので、途中で閉じても続きから確認できます。</p>
+
+    <p id="error-banner" class="error-banner hidden"></p>
+
+    <section class="panel">
+      <h2>新しいカテゴリの構成</h2>
+      <div class="tree" id="tree"></div>
+    </section>
+
+    <div class="toolbar">
+      <div class="tabs" id="filter-tabs"></div>
+      <input type="text" id="search" placeholder="利用先で絞り込み">
+      <span class="count" id="count"></span>
+    </div>
+
+    <section class="panel table-panel">
+      <div class="row head">
+        <span class="col-merchant">利用先</span>
+        <span class="col-count">件数</span>
+        <span class="col-amount">合計</span>
+        <span class="col-old">今のカテゴリ</span>
+        <span class="col-new">新しい大分類・中分類</span>
+      </div>
+      <div id="rows"><div class="empty">読み込み中…</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>反映後のカテゴリ別の合計（全期間）</h2>
+      <table class="summary-table">
+        <thead><tr><th>大分類</th><th>利用先</th><th>明細</th><th>金額</th><th>割合</th></tr></thead>
+        <tbody id="summary"></tbody>
+      </table>
+      <div class="apply-box">
+        <button type="button" class="btn btn-primary" id="apply">この内容で反映する</button>
+        <button type="button" class="btn btn-danger hidden" id="apply-confirm">本当に反映する</button>
+        <button type="button" class="btn hidden" id="apply-cancel">やめる</button>
+        <button type="button" class="btn" id="reset">案を最初の状態に戻す</button>
+      </div>
+      <p class="status" id="status"></p>
+    </section>
+  </main>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // 新しいカテゴリ構成（大分類 → 中分類）
+  // ---------------------------------------------------------------------------
+  const TREE = [
+    ['食費', ['食料品', '外食', 'カフェ・飲み物']],
+    ['日用品', ['ドラッグストア', '生活雑貨']],
+    ['住まい・光熱・通信', ['電気・ガス', '水道', '通信']],
+    ['交通', ['電車・チャージ', '定期券', 'タクシー']],
+    ['趣味・娯楽', ['映画・イベント', 'ゲーム・動画・電子書籍', 'サブスク', 'その他の趣味']],
+    ['旅行・レジャー', ['宿泊', 'テーマパーク・観光']],
+    ['買い物', ['家電・PC', '服・ファッション', 'その他の買い物']],
+    ['美容・健康', ['美容院など', '病院・薬']],
+    ['教育・自己投資', ['教習所', '教材・資格']],
+    ['その他', ['年会費・手数料', 'その他']],
+    ['投資・貯蓄', ['投信積立']],
+  ];
+  const TREE_NAMES = TREE.map(([c]) => c);
+
+  // 利用先名（merchantKey：全角→半角・大文字・空白なし）に対する振り分けルール。上から順に最初に一致したものを使う
+  const RULES = [
+    [/SBI証券|投信|積立|NISA|IDECO/, '投資・貯蓄', '投信積立'],
+    [/年会費|^消費税$/, 'その他', '年会費・手数料'],
+    [/教習所|運転免許/, '教育・自己投資', '教習所'],
+    [/WEB問題集/, '教育・自己投資', '教材・資格'],
+    [/ニチガス|電力|でんき|ガス料金/, '住まい・光熱・通信', '電気・ガス'],
+    [/水道|スイドウ/, '住まい・光熱・通信', '水道'],
+    [/POVO|GMOとくとく|DOCOMO|ドコモ|ソフトバンク|楽天モバイル|AHAMO/, '住まい・光熱・通信', '通信'],
+    [/定期券|テイキケン/, '交通', '定期券'],
+    [/三和交通|タクシー|TAXI/, '交通', 'タクシー'],
+    [/PASMO|SUICA|タッチ決済交通|SMOOZ|エキマルシェ|鉄道/, '交通', '電車・チャージ'],
+    [/SPOTIFY|NETFLIX|APPLEITUNES|CLAUDE|ANTHROPIC|BOARDGAMEARENA|AMAZONプライム|AMAZONWEBSERVICES|YOUTUBEPREMIUM/, '趣味・娯楽', 'サブスク'],
+    [/AMAZONDOWNLOADS|^DMM|STEAM|マイニンテンドー|PRIMEVIDEO|KINDLE/, '趣味・娯楽', 'ゲーム・動画・電子書籍'],
+    [/シネマ|TOHO|チケット|ぴあ|WEBKET|うさフェスタ/, '趣味・娯楽', '映画・イベント'],
+    [/NAMCO|フルコンプ|古本市場|ブックオフ|ふるいち|コロコロ堂|遊舎工房|FANGAMER|ニンテンドーミュージアム/, '趣味・娯楽', 'その他の趣味'],
+    [/一休|ウォルドーフ|ホテル|HOTEL|旅館|じゃらん|楽天トラベル/, '旅行・レジャー', '宿泊'],
+    [/USJ|ユニバーサル|KKDAY|温泉|慈眼寺|アソビュー|NIPPONIA/, '旅行・レジャー', 'テーマパーク・観光'],
+    [/ノジマ|ヨドバシ|ビックカメラ|ヤマダ電機|ケーズデンキ/, '買い物', '家電・PC'],
+    [/ユニクロ|ZOZO|ルミネ|UNIQLO/, '買い物', '服・ファッション'],
+    [/無印|ニトリ|ダイソー|IKEA/, '日用品', '生活雑貨'],
+    [/動物病院/, 'その他', 'その他'],
+    [/ブロッサム大山/, '美容・健康', '美容院など'],
+    [/クリニック|内科|病院|医院|歯科/, '美容・健康', '病院・薬'],
+    [/ウエルシア|スギ薬局|マツモトキヨシ|薬局|調剤/, '日用品', 'ドラッグストア'],
+    [/三越|大丸|阪神梅田|丸ビル|丸の内ビル|COREDO|ダイバーシティ|ららぽーと|イオンモール|グランフロント|ミッドタウン|コルトンプラザ|パルコ|ギフトショップ|物産|東京ビル|ヤフーかんたん決済|JRーCROSS/, '買い物', 'その他の買い物'],
+    [/マダム・トキ/, '食費', '外食'],
+    [/ワイズマート|セイユウ|西友|オーケー|業務スー|マルエツ|コープ|イオンリテール|ジェーソン|KALDI|セブン|ローソン|ファミリーマート|ミニストップ|NEWDAYS|食品|グランスタ|酒悦|シャポー|ピーターパン|パティスリー|本川藤由|サンジェルマン/, '食費', '食料品'],
+    [/ドトール|COFFEE|珈琲|カフェ|CAFE|ベローチェ|スターバックス|コメダ|プロント|COKEON|COKEON|自販機|ビバレッジ|ダイド|ベンデイング|アペックス|ヴェンキ|ティ.?ハウス/, '食費', 'カフェ・飲み物'],
+  ];
+  // ルールに当てはまらないときは、今のカテゴリから引き継ぐ
+  const OLD_DEFAULT = {
+    '食費': ['食費', '外食'],
+    '日用品': ['日用品', '生活雑貨'],
+    '水道光熱': ['住まい・光熱・通信', '電気・ガス'],
+    '通信': ['住まい・光熱・通信', '通信'],
+    '交通費': ['交通', '電車・チャージ'],
+    '固定費': ['その他', 'その他'],
+    'その他': ['その他', 'その他'],
+  };
+  const DRAFT_KEY = 'categorize.draft.v1';
+
+  const state = {
+    session: null,
+    statements: [],   // {id, merchant, category, subcategory, amount}
+    rules: [],        // merchant_categories
+    categories: [],
+    subcategories: [],
+    groups: [],       // {key, label, raws:Set, ids:[], count, sum, oldCats:{name:count}, oldCat, oldSub, proposal:{cat,sub}}
+    choice: {},       // key -> {cat, sub}（ユーザーが変更したもの）
+    filter: 'changed',
+    search: '',
+    applying: false,
+  };
+
+  const $ = (id) => document.getElementById(id);
+  function esc(s) { return String(s).replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+  function fmt(n) { return Math.round(n).toLocaleString('ja-JP'); }
+  function showError(msg) { const el = $('error-banner'); el.textContent = msg || ''; el.classList.toggle('hidden', !msg); }
+  function setStatus(msg, cls) { const el = $('status'); el.textContent = msg || ''; el.className = 'status' + (cls ? ' ' + cls : ''); }
+
+  function propose(key, oldCat, oldSub) {
+    // すでに新しい構成のカテゴリなら、それを優先（やり直し時に手で直した内容を消さない）
+    if (oldCat && TREE_NAMES.includes(oldCat) && oldCat !== 'その他' && oldCat !== '食費' && oldCat !== '日用品') {
+      return { cat: oldCat, sub: oldSub || ruleFor(key, oldCat) || '' };
+    }
+    const hit = RULES.find(([re]) => re.test(key));
+    if (hit) return { cat: hit[1], sub: hit[2] };
+    if (oldCat && TREE_NAMES.includes(oldCat)) return { cat: oldCat, sub: oldSub || (OLD_DEFAULT[oldCat] || [])[1] || '' };
+    if (oldCat && OLD_DEFAULT[oldCat]) return { cat: OLD_DEFAULT[oldCat][0], sub: OLD_DEFAULT[oldCat][1] };
+    return { cat: oldCat || '', sub: '' };
+  }
+  function ruleFor(key, cat) {
+    const hit = RULES.find(([re, c]) => c === cat && re.test(key));
+    return hit ? hit[2] : '';
+  }
+  function current(g) { return state.choice[g.key] || g.proposal; }
+  function isChangedCat(g) { return (current(g).cat || '') !== (g.oldCat || ''); }
+  function isEdited(g) { return !!state.choice[g.key]; }
+
+  // ---------------------------------------------------------------------------
+  // 読み込み
+  // ---------------------------------------------------------------------------
+  async function fetchAllStatements() {
+    const out = [];
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabaseClient.from('card_statements')
+        .select('id, merchant, category, subcategory, amount')
+        .order('id', { ascending: true }).range(from, from + PAGE - 1);
+      if (error) throw error;
+      out.push(...data);
+      if (data.length < PAGE) break;
+    }
+    return out;
+  }
+
+  async function load() {
+    try {
+      const [statements, rulesRes, categories, subcategories] = await Promise.all([
+        fetchAllStatements(),
+        supabaseClient.from('merchant_categories').select('id, keyword, category_name, subcategory_name, source'),
+        fetchCategories(),
+        fetchSubcategories(),
+      ]);
+      if (rulesRes.error) throw rulesRes.error;
+      state.statements = statements;
+      state.rules = rulesRes.data || [];
+      state.categories = categories;
+      state.subcategories = subcategories;
+    } catch (e) {
+      showError('読み込みエラー: ' + e.message + '（データベースに中分類の列がまだない場合は、先に phase13 の SQL を実行してください）');
+      $('rows').innerHTML = '';
+      return;
+    }
+    buildGroups();
+    try { state.choice = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') || {}; } catch (e) { state.choice = {}; }
+    // 下書きのうち、今の利用先にないものは捨てる
+    const keys = new Set(state.groups.map((g) => g.key));
+    Object.keys(state.choice).forEach((k) => { if (!keys.has(k)) delete state.choice[k]; });
+    renderAll();
+  }
+
+  function buildGroups() {
+    const map = new Map();
+    state.statements.forEach((s) => {
+      const key = merchantKey(s.merchant);
+      let g = map.get(key);
+      if (!g) { g = { key, label: merchantLabel(s.merchant), raws: new Set(), ids: [], count: 0, sum: 0, oldCats: {}, oldSubs: {} }; map.set(key, g); }
+      g.raws.add(s.merchant);
+      g.ids.push(s.id);
+      g.count += 1;
+      g.sum += Number(s.amount);
+      const oc = s.category || '';
+      g.oldCats[oc] = (g.oldCats[oc] || 0) + 1;
+      if (s.subcategory) g.oldSubs[s.subcategory] = (g.oldSubs[s.subcategory] || 0) + 1;
+    });
+    state.groups = [...map.values()].map((g) => {
+      const top = (o) => Object.entries(o).sort((a, b) => b[1] - a[1])[0];
+      g.oldCat = (top(g.oldCats) || [''])[0];
+      g.oldSub = (top(g.oldSubs) || [''])[0];
+      g.proposal = propose(g.key, g.oldCat, g.oldSub);
+      return g;
+    }).sort((a, b) => b.sum - a.sum);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 表示
+  // ---------------------------------------------------------------------------
+  function renderAll() { renderTree(); renderTabs(); renderRows(); renderSummary(); }
+
+  function renderTree() {
+    $('tree').innerHTML = TREE.map(([c, subs]) =>
+      `<div class="tree-item"><strong>${esc(c)}</strong><span>${subs.map(esc).join('／')}</span></div>`).join('');
+  }
+
+  function renderTabs() {
+    const changed = state.groups.filter(isChangedCat).length;
+    const opts = [['changed', `大分類が変わるもの（${changed}）`], ['all', `すべて（${state.groups.length}）`], ['other', '「その他」になるもの'], ['edited', '自分で直したもの']];
+    $('filter-tabs').innerHTML = opts.map(([id, label]) =>
+      `<button type="button" data-filter="${id}" class="${state.filter === id ? 'active' : ''}">${label}</button>`).join('');
+    $('filter-tabs').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { state.filter = b.dataset.filter; renderTabs(); renderRows(); }));
+  }
+
+  function visibleGroups() {
+    const q = state.search.trim().normalize('NFKC').toUpperCase();
+    return state.groups.filter((g) => {
+      if (state.filter === 'changed' && !isChangedCat(g)) return false;
+      if (state.filter === 'other' && current(g).cat !== 'その他') return false;
+      if (state.filter === 'edited' && !isEdited(g)) return false;
+      if (q && !g.key.includes(q) && !g.label.toUpperCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  function catOptions(selected) {
+    const names = [...TREE_NAMES];
+    if (selected && !names.includes(selected)) names.push(selected);
+    return `<option value="" ${selected ? '' : 'selected'}>（未設定）</option>` +
+      names.map((n) => `<option value="${esc(n)}" ${n === selected ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  }
+  function subOptions(cat, selected) {
+    const tree = TREE.find(([c]) => c === cat);
+    const names = tree ? [...tree[1]] : [];
+    if (selected && !names.includes(selected)) names.push(selected);
+    return `<option value="" ${selected ? '' : 'selected'}>（中分類なし）</option>` +
+      names.map((n) => `<option value="${esc(n)}" ${n === selected ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  }
+
+  function renderRows() {
+    const list = visibleGroups();
+    $('count').textContent = `${list.length}件の利用先を表示中`;
+    if (!list.length) { $('rows').innerHTML = '<div class="empty">この条件に当てはまる利用先はありません。</div>'; return; }
+    $('rows').innerHTML = list.map((g) => {
+      const cur = current(g);
+      const changed = isChangedCat(g);
+      const raws = [...g.raws];
+      const title = raws.length > 1 ? `まとめた表記：\n${raws.join('\n')}` : raws[0];
+      return `
+        <div class="row ${changed ? 'changed' : ''}">
+          <span class="col-merchant" title="${esc(title)}">${esc(g.label)}${raws.length > 1 ? `<span class="badge" style="background:#EEE;color:#555;">${raws.length}表記</span>` : ''}${isEdited(g) ? '<span class="badge edited">修正済み</span>' : (changed ? '<span class="badge">変更</span>' : '')}</span>
+          <span class="col-count">${g.count}件</span>
+          <span class="col-amount">${fmt(g.sum)}円</span>
+          <span class="col-old">${esc(g.oldCat || '（未設定）')}${g.oldSub ? `<br><small>${esc(g.oldSub)}</small>` : ''}</span>
+          <span class="col-new">
+            <select data-cat="${esc(g.key)}" aria-label="${esc(g.label)}の大分類">${catOptions(cur.cat)}</select>
+            <select data-sub="${esc(g.key)}" aria-label="${esc(g.label)}の中分類" ${cur.cat ? '' : 'disabled'}>${subOptions(cur.cat, cur.sub)}</select>
+          </span>
+        </div>`;
+    }).join('');
+    $('rows').querySelectorAll('select[data-cat]').forEach((sel) => sel.addEventListener('change', () => {
+      const g = state.groups.find((x) => x.key === sel.dataset.cat);
+      const tree = TREE.find(([c]) => c === sel.value);
+      const sub = ruleFor(g.key, sel.value) || (tree && tree[1].length === 1 ? tree[1][0] : '');
+      setChoice(g, { cat: sel.value, sub });
+    }));
+    $('rows').querySelectorAll('select[data-sub]').forEach((sel) => sel.addEventListener('change', () => {
+      const g = state.groups.find((x) => x.key === sel.dataset.sub);
+      setChoice(g, { cat: current(g).cat, sub: sel.value });
+    }));
+  }
+
+  function setChoice(g, choice) {
+    if (choice.cat === g.proposal.cat && choice.sub === g.proposal.sub) delete state.choice[g.key];
+    else state.choice[g.key] = choice;
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(state.choice)); } catch (e) { /* 保存できなくても続行 */ }
+    renderTabs(); renderRows(); renderSummary();
+  }
+
+  function renderSummary() {
+    const total = state.groups.reduce((s, g) => s + g.sum, 0) || 1;
+    const agg = {};
+    state.groups.forEach((g) => {
+      const c = current(g).cat || '（未設定）';
+      const a = agg[c] || (agg[c] = { merchants: 0, count: 0, sum: 0 });
+      a.merchants += 1; a.count += g.count; a.sum += g.sum;
+    });
+    const order = [...TREE_NAMES, ...Object.keys(agg).filter((c) => !TREE_NAMES.includes(c))];
+    $('summary').innerHTML = order.filter((c) => agg[c]).map((c) =>
+      `<tr><td>${esc(c)}</td><td>${agg[c].merchants}</td><td>${agg[c].count}件</td><td>${fmt(agg[c].sum)}円</td><td>${Math.round(agg[c].sum / total * 100)}%</td></tr>`).join('');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 反映
+  // ---------------------------------------------------------------------------
+  function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
+
+  async function apply() {
+    state.applying = true;
+    ['apply', 'apply-confirm', 'apply-cancel', 'reset'].forEach((id) => { $(id).disabled = true; });
+    const log = [];
+    const step = (m) => { log.push(m); setStatus(log.join('\n')); };
+    try {
+      const uid = state.session.user.id;
+      const beforeCount = state.statements.length;
+      const beforeSum = state.statements.reduce((s, r) => s + Number(r.amount), 0);
+
+      // 1. 大分類（categories）：新しい構成の名前を用意し、並び順をそろえる
+      step('1/6 大分類を用意しています…');
+      for (let i = 0; i < TREE.length; i++) {
+        const name = TREE[i][0];
+        const existing = state.categories.find((c) => c.name === name);
+        if (existing) {
+          if (existing.sort_order !== i) await supabaseClient.from('categories').update({ sort_order: i }).eq('id', existing.id);
+        } else {
+          const { error } = await supabaseClient.from('categories').insert({ user_id: uid, name, sort_order: i });
+          if (error && error.code !== '23505') throw error;
+        }
+      }
+
+      // 2. 中分類（subcategories）
+      step('2/6 中分類を用意しています…');
+      const subRows = [];
+      TREE.forEach(([cat, subs]) => subs.forEach((name, i) => subRows.push({ user_id: uid, category_name: cat, name, sort_order: i })));
+      // 一覧で選ばれた、構成外の中分類も作っておく
+      state.groups.forEach((g) => {
+        const cur = current(g);
+        if (cur.cat && cur.sub && !subRows.some((r) => r.category_name === cur.cat && r.name === cur.sub)) {
+          subRows.push({ user_id: uid, category_name: cur.cat, name: cur.sub, sort_order: 99 });
+        }
+      });
+      const { error: subErr } = await supabaseClient.from('subcategories').upsert(subRows, { onConflict: 'user_id,category_name,name', ignoreDuplicates: true });
+      if (subErr) throw subErr;
+
+      // 3. 明細（card_statements）：利用先ごとの選択を、変わるものだけ書き換える
+      step('3/6 明細を書き換えています…');
+      const byTarget = new Map();
+      const stmtById = new Map(state.statements.map((s) => [s.id, s]));
+      state.groups.forEach((g) => {
+        const cur = current(g);
+        if (!cur.cat) return; // 未設定のままにするものは触らない
+        g.ids.forEach((id) => {
+          const s = stmtById.get(id);
+          if ((s.category || '') === cur.cat && (s.subcategory || '') === (cur.sub || '')) return;
+          const k = cur.cat + '\u0000' + (cur.sub || '');
+          if (!byTarget.has(k)) byTarget.set(k, { cat: cur.cat, sub: cur.sub || null, ids: [] });
+          byTarget.get(k).ids.push(id);
+        });
+      });
+      let stmtUpdated = 0;
+      for (const t of byTarget.values()) {
+        for (const ids of chunk(t.ids, 150)) {
+          const { error } = await supabaseClient.from('card_statements').update({ category: t.cat, subcategory: t.sub }).in('id', ids);
+          if (error) throw error;
+          stmtUpdated += ids.length;
+          step(`3/6 明細を書き換えています…（${stmtUpdated}件）`);
+        }
+      }
+
+      // 4. ナレッジ（merchant_categories）：ルールのキーワードが当てはまる利用先の選択に合わせる
+      step('4/6 ナレッジのルールを書き換えています…');
+      const choiceByKey = new Map(state.groups.map((g) => [g.key, current(g)]));
+      const ruleTargets = new Map();
+      state.rules.forEach((r) => {
+        let target = choiceByKey.get(merchantKey(r.keyword));
+        if (!target) {
+          const old = OLD_DEFAULT[r.category_name];
+          target = TREE_NAMES.includes(r.category_name) && r.category_name !== 'その他'
+            ? { cat: r.category_name, sub: r.subcategory_name || '' }
+            : old ? { cat: old[0], sub: old[1] } : null;
+        }
+        if (!target || !target.cat) return;
+        if (r.category_name === target.cat && (r.subcategory_name || '') === (target.sub || '')) return;
+        const k = target.cat + '\u0000' + (target.sub || '');
+        if (!ruleTargets.has(k)) ruleTargets.set(k, { cat: target.cat, sub: target.sub || null, ids: [] });
+        ruleTargets.get(k).ids.push(r.id);
+      });
+      let ruleUpdated = 0;
+      for (const t of ruleTargets.values()) {
+        for (const ids of chunk(t.ids, 150)) {
+          const { error } = await supabaseClient.from('merchant_categories').update({ category_name: t.cat, subcategory_name: t.sub }).in('id', ids);
+          if (error) throw error;
+          ruleUpdated += ids.length;
+        }
+      }
+      // ルールがまだない利用先は、今後の自動取込で同じ分類になるようルールを追加する
+      const newRules = [];
+      state.groups.forEach((g) => {
+        const cur = current(g);
+        if (!cur.cat) return;
+        g.raws.forEach((raw) => {
+          if (state.rules.some((r) => r.keyword && raw.includes(r.keyword))) return;
+          newRules.push({ user_id: uid, keyword: raw, category_name: cur.cat, subcategory_name: cur.sub || null, priority: 0, source: 'human' });
+        });
+      });
+      for (const rows of chunk(newRules, 200)) {
+        const { error } = await supabaseClient.from('merchant_categories').upsert(rows, { onConflict: 'user_id,keyword' });
+        if (error) throw error;
+      }
+
+      // 5. 使われなくなった旧カテゴリを削除
+      step('5/6 使われなくなった旧カテゴリを片付けています…');
+      const removed = [];
+      for (const c of state.categories) {
+        if (TREE_NAMES.includes(c.name)) continue;
+        const [a, b] = await Promise.all([
+          supabaseClient.from('card_statements').select('id', { count: 'exact', head: true }).eq('category', c.name),
+          supabaseClient.from('merchant_categories').select('id', { count: 'exact', head: true }).eq('category_name', c.name),
+        ]);
+        if ((a.count ?? 1) === 0 && (b.count ?? 1) === 0) {
+          const { error } = await supabaseClient.from('categories').delete().eq('id', c.id);
+          if (!error) removed.push(c.name);
+        }
+      }
+
+      // 6. 確かめ：明細の件数・合計が変わっていないこと、構成外のカテゴリが残っていないこと
+      step('6/6 反映結果を確かめています…');
+      const after = await fetchAllStatements();
+      const afterSum = after.reduce((s, r) => s + Number(r.amount), 0);
+      const outside = after.filter((r) => r.category && !TREE_NAMES.includes(r.category));
+      const ok = after.length === beforeCount && Math.round(afterSum) === Math.round(beforeSum);
+      try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* noop */ }
+      setStatus(
+        `反映しました。明細${stmtUpdated}件・ナレッジ${ruleUpdated}件を書き換え、ナレッジを${newRules.length}件追加しました。` +
+        (removed.length ? `\n使われなくなった旧カテゴリを削除しました：${removed.join('、')}` : '') +
+        `\n明細の件数 ${beforeCount}件 → ${after.length}件、合計 ${fmt(beforeSum)}円 → ${fmt(afterSum)}円${ok ? '（変わっていません）' : '（差があります。確認してください）'}` +
+        (outside.length ? `\n新しい構成にないカテゴリの明細が${outside.length}件残っています（${[...new Set(outside.map((r) => r.category))].join('、')}）。` : ''),
+        ok && !outside.length ? 'ok' : 'err');
+      await load();
+    } catch (e) {
+      setStatus(log.join('\n') + '\nエラーが発生したため途中で止めました：' + e.message + '\n（ここまでの変更は残っています。もう一度「この内容で反映する」を押すと、残りから続けられます）', 'err');
+    } finally {
+      state.applying = false;
+      ['apply', 'apply-confirm', 'apply-cancel', 'reset'].forEach((id) => { $(id).disabled = false; });
+      $('apply-confirm').classList.add('hidden');
+      $('apply-cancel').classList.add('hidden');
+      $('apply').classList.remove('hidden');
+    }
+  }
+
+  $('apply').addEventListener('click', () => {
+    const changedStmts = state.groups.reduce((s, g) => s + (current(g).cat ? g.ids.length : 0), 0);
+    setStatus(`${state.groups.length}件の利用先（明細${changedStmts}件）と、ナレッジのルールを新しい構成に書き換えます。よろしければ「本当に反映する」を押してください。`);
+    $('apply').classList.add('hidden');
+    $('apply-confirm').classList.remove('hidden');
+    $('apply-cancel').classList.remove('hidden');
+  });
+  $('apply-cancel').addEventListener('click', () => {
+    setStatus('');
+    $('apply').classList.remove('hidden');
+    $('apply-confirm').classList.add('hidden');
+    $('apply-cancel').classList.add('hidden');
+  });
+  $('apply-confirm').addEventListener('click', () => { if (!state.applying) apply(); });
+  $('reset').addEventListener('click', () => {
+    state.choice = {};
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* noop */ }
+    renderAll();
+    setStatus('案を最初の状態に戻しました。');
+  });
+  let searchTimer = null;
+  $('search').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.search = $('search').value; renderRows(); }, 150);
+  });
+
+  (async () => {
+    const session = await requireAuth();
+    if (!session) return;
+    state.session = session;
+    await load();
+  })();
+</script>
+
+</body>
+</html>

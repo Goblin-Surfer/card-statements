@@ -174,10 +174,15 @@
             <select id="f-category"></select>
           </label>
           <label class="field">
-            メモ（任意）
-            <input type="text" id="f-memo" placeholder="メモを追加">
+            中分類（任意）
+            <select id="f-subcategory"></select>
           </label>
         </div>
+
+        <label class="field">
+          メモ（任意）
+          <input type="text" id="f-memo" placeholder="メモを追加">
+        </label>
 
         <div class="new-cat-inline hidden" id="new-category-box">
           <input type="text" id="f-new-category-name" placeholder="新しいカテゴリ名">
@@ -188,6 +193,10 @@
         <label class="field-checkbox">
           <input type="checkbox" id="f-shared">
           清算対象にする（同居人・パートナーと割り勘する明細）
+        </label>
+        <label class="field-checkbox">
+          <input type="checkbox" id="f-special">
+          特別な出費にする（旅行・家電など一度きりの支払い。分析で「ふだんの生活費」と分けて扱います）
         </label>
 
         <div class="preview-box">
@@ -223,7 +232,7 @@
 <script>
   const PALETTE = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#4A3AA7', '#E34948'];
 
-  const state = { session: null, cards: [], recent: [], categories: [] };
+  const state = { session: null, cards: [], recent: [], categories: [], subcategories: [] };
 
   const cardSelect = document.getElementById('f-card');
   const cardDot = document.getElementById('card-dot');
@@ -231,6 +240,8 @@
   const amountInput = document.getElementById('f-amount');
   const merchantInput = document.getElementById('f-merchant');
   const categorySelect = document.getElementById('f-category');
+  const subcategorySelect = document.getElementById('f-subcategory');
+  const specialCheckbox = document.getElementById('f-special');
   const newCategoryBox = document.getElementById('new-category-box');
   const newCategoryNameInput = document.getElementById('f-new-category-name');
   const newCategoryAddBtn = document.getElementById('new-category-add');
@@ -294,11 +305,18 @@
     const newOption = `<option value="__new__">＋ 新しいカテゴリを追加</option>`;
     categorySelect.innerHTML = catOptions + newOption;
     if (preferredName) categorySelect.value = preferredName;
+    renderSubcategoryOptions();
+  }
+
+  function renderSubcategoryOptions() {
+    const cat = categorySelect.value === '__new__' ? '' : categorySelect.value;
+    subcategorySelect.innerHTML = subcategoryOptionsHtml(state.subcategories, cat, '');
+    subcategorySelect.disabled = !cat;
   }
 
   async function loadCategories() {
     try {
-      state.categories = await fetchCategories();
+      [state.categories, state.subcategories] = await Promise.all([fetchCategories(), fetchSubcategories()]);
     } catch (e) {
       showStatus('カテゴリ読み込みエラー: ' + e.message, 'error');
     }
@@ -313,6 +331,7 @@
     } else {
       newCategoryBox.classList.add('hidden');
     }
+    renderSubcategoryOptions();
   });
 
   newCategoryAddBtn.addEventListener('click', async () => {
@@ -349,7 +368,7 @@
           <span class="col-date">${dateLabel}</span>
           <span class="col-card"><span class="dot" style="background:${color};"></span>${escapeHtml(cardName)}</span>
           <span class="col-merchant">${escapeHtml(r.merchant)}${r.memo ? '（' + escapeHtml(r.memo) + '）' : ''}${r.is_shared ? ' <span style="padding:2px 8px;background:#D7F0EC;color:#0B6B57;border-radius:10px;font-size:11px;font-weight:700;">清算対象</span>' : ''}</span>
-          <span class="col-category">${escapeHtml(r.category || '')}</span>
+          <span class="col-category">${escapeHtml(r.category || '')}${r.subcategory ? '<br><span style="font-size:12px;color:var(--text-muted);">' + escapeHtml(r.subcategory) + '</span>' : ''}${r.is_special ? ' <span style="padding:2px 8px;background:#FDECC8;color:#8A5A00;border-radius:10px;font-size:11px;font-weight:700;">特別</span>' : ''}</span>
           <span class="col-amount">${Number(r.amount).toLocaleString('ja-JP')}円</span>
           <span class="col-billing">${billingLabel}</span>
         </div>`;
@@ -392,6 +411,8 @@
       amount: Number(amountInput.value),
       merchant: merchantInput.value.trim(),
       category: categorySelect.value === '__new__' ? null : categorySelect.value,
+      subcategory: categorySelect.value === '__new__' ? null : (subcategorySelect.value || null),
+      is_special: specialCheckbox.checked,
       memo: memoInput.value.trim() || null,
       is_shared: sharedCheckbox.checked,
       status: 'confirmed',
@@ -412,6 +433,7 @@
     merchantInput.value = '';
     memoInput.value = '';
     sharedCheckbox.checked = false;
+    specialCheckbox.checked = false;
     updateSaveEnabled();
 
     state.recent = [data].concat(state.recent).slice(0, 10);

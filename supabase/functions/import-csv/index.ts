@@ -312,8 +312,8 @@ async function computeImportHash(cardId: string, row: ParsedRow): Promise<string
 // （同じ priority なら keyword が長い=より具体的なもの）を採用する。
 // 一致するルールが無ければ null を返し、list.html 側で人間に判断してもらう。
 // ---------------------------------------------------------------------------
-type CategoryRule = { keyword: string; category_name: string; priority: number; source: string };
-type CategoryResolution = { category: string; source: string };
+type CategoryRule = { keyword: string; category_name: string; subcategory_name: string | null; priority: number; source: string };
+type CategoryResolution = { category: string; subcategory: string | null; source: string };
 
 function resolveCategory(
   rulesByUser: Map<string, CategoryRule[]>,
@@ -332,7 +332,8 @@ function resolveCategory(
   });
   // source: 人間が確定した('human')キーワードに一致していれば確定扱い。
   // AIが推測して登録した('ai')キーワードに一致した場合は、まだ人間未確認として扱う。
-  return { category: matches[0].category_name, source: matches[0].source };
+  // 中分類（subcategory_name）もルールに入っていれば一緒に引き継ぐ
+  return { category: matches[0].category_name, subcategory: matches[0].subcategory_name ?? null, source: matches[0].source };
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +430,7 @@ Deno.serve(async (req: Request) => {
     ] = await Promise.all([
       admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
       admin.from("csv_import_profiles").select("*"),
-      admin.from("merchant_categories").select("user_id, keyword, category_name, priority, source"),
+      admin.from("merchant_categories").select("user_id, keyword, category_name, subcategory_name, priority, source"),
       admin.from("categories").select("user_id, name, sort_order").order("sort_order", { ascending: true }),
     ]);
     if (cardsErr) throw cardsErr;
@@ -445,7 +446,7 @@ Deno.serve(async (req: Request) => {
     const categoryRulesByUser = new Map<string, CategoryRule[]>();
     for (const r of categoryRuleRows ?? []) {
       const list = categoryRulesByUser.get(r.user_id) ?? [];
-      list.push({ keyword: r.keyword, category_name: r.category_name, priority: r.priority, source: r.source ?? "human" });
+      list.push({ keyword: r.keyword, category_name: r.category_name, subcategory_name: r.subcategory_name ?? null, priority: r.priority, source: r.source ?? "human" });
       categoryRulesByUser.set(r.user_id, list);
     }
 
@@ -508,6 +509,7 @@ Deno.serve(async (req: Request) => {
             // 1. まずナレッジ（merchant_categories）に一致するか確認
             const resolved = resolveCategory(categoryRulesByUser, card.user_id, r.merchant);
             let category: string | null = resolved?.category ?? null;
+            const subcategory: string | null = resolved?.subcategory ?? null;
             // category_source: 'human' = 人間が確定したキーワードに一致 → 確定扱い。
             // 'ai' = AIが推測しただけ（まだ人間未確認）→ list.html で要確認表示にする。
             let categorySource: string | null = resolved?.source ?? null;
@@ -523,7 +525,7 @@ Deno.serve(async (req: Request) => {
                 // AI判定なしで自動分類されるよう、その場でナレッジに記録する
                 // （source: 'ai' のまま。人間がlist.htmlで修正・確認すると 'human' に更新される）
                 const rules = categoryRulesByUser.get(card.user_id) ?? [];
-                rules.push({ keyword: r.merchant, category_name: aiCategory, priority: 0, source: "ai" });
+                rules.push({ keyword: r.merchant, category_name: aiCategory, subcategory_name: null, priority: 0, source: "ai" });
                 categoryRulesByUser.set(card.user_id, rules);
 
                 const { error: ruleError } = await admin.from("merchant_categories").upsert(
@@ -547,6 +549,7 @@ Deno.serve(async (req: Request) => {
               amount: r.amount,
               merchant: r.merchant,
               category,
+              subcategory,
               category_source: categorySource,
               memo: r.memo,
               status: "confirmed",
