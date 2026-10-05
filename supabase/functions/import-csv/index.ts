@@ -339,25 +339,49 @@ function resolveCategory(
 // ---------------------------------------------------------------------------
 // カテゴリ自動分類（AI判定・任意機能）
 // merchant_categories に一致するルールが無い「初めての利用先」だけ、
-// Cloudflare Workers AI に推測してもらう。モデルが自信を持って判断できない
-// 場合（「不明」や、6カテゴリ以外の出力）はnullを返し、人間の判断に回す。
+// Cloudflare Workers AI に「大分類／中分類」の組を一つ選んでもらう。
+// モデルが自信を持って判断できない場合（「不明」や、選択肢にない出力）はnullを返し、人間の判断に回す。
+// 大分類だけが返ってきた場合は、中分類なし（null）として大分類だけ採用する。
 // APIキー未設定・通信エラー・タイムアウトなど何が起きても例外を投げず、
 // 常にnullにフォールバックして取込全体を止めないようにする。
 // ---------------------------------------------------------------------------
-async function classifyWithAI(merchant: string, categoryList: string[]): Promise<string | null> {
+type CategoryChoice = { category: string; subcategory: string | null };
+
+// 大分類ごとの中分類から、AIに見せる選択肢（「食費／外食」など）を作る。中分類が無い大分類は大分類名だけ
+function buildChoices(categoryList: string[], subcategories: { category_name: string; name: string }[]): CategoryChoice[] {
+  const choices: CategoryChoice[] = [];
+  for (const cat of categoryList) {
+    const subs = subcategories.filter((s) => s.category_name === cat);
+    if (subs.length === 0) choices.push({ category: cat, subcategory: null });
+    for (const s of subs) choices.push({ category: cat, subcategory: s.name });
+  }
+  return choices;
+}
+
+function choiceLabel(c: CategoryChoice): string {
+  return c.subcategory ? `${c.category}／${c.subcategory}` : c.category;
+}
+
+async function classifyWithAI(
+  merchant: string,
+  categoryList: string[],
+  subcategories: { category_name: string; name: string }[],
+): Promise<CategoryChoice | null> {
   if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) return null;
   // そのユーザーがまだ一つもカテゴリを作っていない場合はAIに選ばせようがないので呼ばない
   if (categoryList.length === 0) return null;
 
+  const choices = buildChoices(categoryList, subcategories);
   const prompt = `あなたは日本のクレジットカード利用明細を分類するアシスタントです。
-次のカテゴリ一覧から最も当てはまるものを一つだけ選び、そのカテゴリ名だけを1行で出力してください。
+次の選択肢（「大分類／中分類」）から最も当てはまるものを一つだけ選び、選択肢の文字列をそのまま1行で出力してください。
 説明や記号は付けないでください。自信を持って判断できない場合は「不明」と出力してください。
 
-カテゴリ一覧: ${categoryList.join(", ")}
+選択肢:
+${choices.map((ch) => "- " + choiceLabel(ch)).join("\n")}
 
 利用先: ${merchant}
 
-カテゴリ:`;
+答え:`;
 
   try {
     const res = await fetch(
@@ -377,9 +401,16 @@ async function classifyWithAI(merchant: string, categoryList: string[]): Promise
     }
     const body = await res.json();
     const raw = String(body?.result?.response ?? "").trim();
-    // モデルが指示通り1行だけ返すとは限らないので、1行目だけを見て判定する
-    const firstLine = raw.split(/\r?\n/)[0].trim().replace(/^[「"']|[」"']$/g, "");
-    return categoryList.includes(firstLine) ? firstLine : null;
+    // モデルが指示通り1行だけ返すとは限らないので、1行目だけを見て判定する。区切りの「/」「>」ゆれも吸収する
+    const firstLine = raw.split(/\r?\n/)[0].trim()
+      .replace(/^[-・\s]+/, "")
+      .replace(/^[「"']|[」"']$/g, "")
+      .replace(/\s*[\/／>＞]\s*/g, "／");
+    const exact = choices.find((ch) => choiceLabel(ch) === firstLine);
+    if (exact) return exact;
+    // 大分類だけが返ってきたときは、中分類なしで採用する
+    const [catOnly] = firstLine.split("／");
+    return categoryList.includes(catOnly) ? { category: catOnly, subcategory: null } : null;
   } catch (e) {
     console.error("Cloudflare Workers AI call failed:", errorMessage(e));
     return null;
@@ -427,16 +458,19 @@ Deno.serve(async (req: Request) => {
       { data: profiles, error: profilesErr },
       { data: categoryRuleRows, error: categoryRulesErr },
       { data: categoryRows, error: categoriesErr },
+      { data: subcategoryRows, error: subcategoriesErr },
     ] = await Promise.all([
       admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
       admin.from("csv_import_profiles").select("*"),
       admin.from("merchant_categories").select("user_id, keyword, category_name, subcategory_name, priority, source"),
       admin.from("categories").select("user_id, name, sort_order").order("sort_order", { ascending: true }),
+      admin.from("subcategories").select("user_id, category_name, name, sort_order").order("sort_order", { ascending: true }),
     ]);
     if (cardsErr) throw cardsErr;
     if (profilesErr) throw profilesErr;
     if (categoryRulesErr) throw categoryRulesErr;
     if (categoriesErr) throw categoriesErr;
+    if (subcategoriesErr) throw subcategoriesErr;
 
     const profileByIssuer = new Map<string, Profile>(
       (profiles ?? []).map((p: Profile) => [p.issuer, p]),
@@ -451,6 +485,14 @@ Deno.serve(async (req: Request) => {
     }
 
     // user_id ごとに「その人が作ったカテゴリ名の一覧」をまとめておく（AI判定の選択肢・検証に使う）
+    // user_id ごとの中分類（AI判定で「大分類／中分類」の選択肢を作るのに使う）
+    const subcategoriesByUser = new Map<string, { category_name: string; name: string }[]>();
+    for (const r of subcategoryRows ?? []) {
+      const list = subcategoriesByUser.get(r.user_id) ?? [];
+      list.push({ category_name: r.category_name, name: r.name });
+      subcategoriesByUser.set(r.user_id, list);
+    }
+
     const categoryListByUser = new Map<string, string[]>();
     for (const r of categoryRows ?? []) {
       const list = categoryListByUser.get(r.user_id) ?? [];
@@ -509,27 +551,33 @@ Deno.serve(async (req: Request) => {
             // 1. まずナレッジ（merchant_categories）に一致するか確認
             const resolved = resolveCategory(categoryRulesByUser, card.user_id, r.merchant);
             let category: string | null = resolved?.category ?? null;
-            const subcategory: string | null = resolved?.subcategory ?? null;
+            let subcategory: string | null = resolved?.subcategory ?? null;
             // category_source: 'human' = 人間が確定したキーワードに一致 → 確定扱い。
             // 'ai' = AIが推測しただけ（まだ人間未確認）→ list.html で要確認表示にする。
             let categorySource: string | null = resolved?.source ?? null;
 
             // 2. 一致しない「初めての利用先」だけ、Cloudflare Workers AIに判定してもらう
             if (!category) {
-              const aiCategory = await classifyWithAI(r.merchant, categoryListByUser.get(card.user_id) ?? []);
-              if (aiCategory) {
+              const aiChoice = await classifyWithAI(
+                r.merchant,
+                categoryListByUser.get(card.user_id) ?? [],
+                subcategoriesByUser.get(card.user_id) ?? [],
+              );
+              if (aiChoice) {
+                const aiCategory = aiChoice.category;
                 category = aiCategory;
+                subcategory = aiChoice.subcategory;
                 categorySource = "ai";
 
                 // 次回以降（このファイル内の後続行も含む）は同じ利用先が
                 // AI判定なしで自動分類されるよう、その場でナレッジに記録する
                 // （source: 'ai' のまま。人間がlist.htmlで修正・確認すると 'human' に更新される）
                 const rules = categoryRulesByUser.get(card.user_id) ?? [];
-                rules.push({ keyword: r.merchant, category_name: aiCategory, subcategory_name: null, priority: 0, source: "ai" });
+                rules.push({ keyword: r.merchant, category_name: aiCategory, subcategory_name: subcategory, priority: 0, source: "ai" });
                 categoryRulesByUser.set(card.user_id, rules);
 
                 const { error: ruleError } = await admin.from("merchant_categories").upsert(
-                  { user_id: card.user_id, keyword: r.merchant, category_name: aiCategory, priority: 0, source: "ai" },
+                  { user_id: card.user_id, keyword: r.merchant, category_name: aiCategory, subcategory_name: subcategory, priority: 0, source: "ai" },
                   { onConflict: "user_id,keyword" },
                 );
                 // ナレッジ登録に失敗しても、この行のカテゴリ設定自体は成立しているので
