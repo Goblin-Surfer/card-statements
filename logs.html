@@ -207,7 +207,7 @@
           <span class="col-card">${escapeHtml(cardName(log.card_id))}</span>
           <span class="col-file">${escapeHtml(log.source_file_name || '')}</span>
           <span class="col-counts">${log.new_count}</span>
-          <span class="col-status"><span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${statusLabel}</span></span>
+          <span class="col-status"><span class="pill ${pillClass}"><span class="dot" style="background:${pillDot};"></span>${escapeHtml(statusLabel)}</span></span>
           <span class="col-detail">${escapeHtml(log.error_message || '')}</span>
         </div>`;
     }).join('');

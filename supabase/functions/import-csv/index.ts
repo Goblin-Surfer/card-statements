@@ -45,6 +45,10 @@ const DRIVE_ROOT_FOLDER_ID = Deno.env.get("DRIVE_ROOT_FOLDER_ID")!; // 「カー
 const CLOUDFLARE_ACCOUNT_ID = Deno.env.get("CLOUDFLARE_ACCOUNT_ID") ?? "";
 const CLOUDFLARE_API_TOKEN = Deno.env.get("CLOUDFLARE_API_TOKEN") ?? "";
 const CLOUDFLARE_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+// AI判定の呼び出し回数の上限（1回の実行あたり）。想定外に大きなCSVや連続実行による課金の暴走を防ぐ
+const MAX_AI_CALLS_PER_RUN = 200;
+// 画面の「今すぐ実行」の最短間隔（秒）。同じユーザーが連続で押しても重い処理が何度も走らないようにする
+const MANUAL_RUN_MIN_INTERVAL_SEC = 60;
 
 // ---------------------------------------------------------------------------
 // CORS: GitHub Pages（ブラウザの「今すぐ実行」ボタン）から直接fetchするため、
@@ -56,6 +60,16 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "authorization, x-cron-secret, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+// 秘密の文字列を、長さや一致位置が応答時間に表れにくい形で比較する
+function safeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const x = enc.encode(a);
+  const y = enc.encode(b);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
 
 // ---------------------------------------------------------------------------
 // Google OAuth: リフレッシュトークンから都度アクセストークンを取得
@@ -73,7 +87,8 @@ async function getGoogleAccessToken(): Promise<string> {
   });
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(`Google token refresh failed: ${JSON.stringify(json)}`);
+    console.error("Google token refresh failed:", JSON.stringify(json));
+    throw new Error("Google token refresh failed");
   }
   return json.access_token as string;
 }
@@ -379,7 +394,7 @@ async function classifyWithAI(
 選択肢:
 ${choices.map((ch) => "- " + choiceLabel(ch)).join("\n")}
 
-利用先: ${merchant}
+利用先: ${merchant.replace(/\s+/g, " ").slice(0, 100)}
 
 答え:`;
 
@@ -430,15 +445,20 @@ Deno.serve(async (req: Request) => {
     const cronHeader = req.headers.get("x-cron-secret") ?? "";
     const authHeader = req.headers.get("authorization") ?? "";
     let authorized = false;
+    // 画面から呼ばれた場合はログイン中ユーザーのID。Cronの場合は null（全ユーザーが対象）
+    let callerUserId: string | null = null;
 
-    if (cronHeader && cronHeader === CRON_SHARED_SECRET) {
+    if (cronHeader && CRON_SHARED_SECRET && safeEqual(cronHeader, CRON_SHARED_SECRET)) {
       authorized = true;
     } else if (authHeader.toLowerCase().startsWith("bearer ")) {
       const userClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
         global: { headers: { Authorization: authHeader } },
       });
       const { data, error } = await userClient.auth.getUser();
-      if (!error && data?.user) authorized = true;
+      if (!error && data?.user) {
+        authorized = true;
+        callerUserId = data.user.id;
+      }
     }
 
     if (!authorized) {
@@ -451,7 +471,24 @@ Deno.serve(async (req: Request) => {
     // ここから先はすべて service_role 相当の権限（RLSを迂回）で実行
     const admin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
+    // 画面からの手動実行は、連続実行を間引く（Google Drive API・AI APIの消費を抑える）
+    if (callerUserId) {
+      const since = new Date(Date.now() - MANUAL_RUN_MIN_INTERVAL_SEC * 1000).toISOString();
+      const { count } = await admin
+        .from("import_logs")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", callerUserId)
+        .gte("run_at", since);
+      if ((count ?? 0) > 0) {
+        return new Response(
+          JSON.stringify({ ok: false, error: `前回の実行から${MANUAL_RUN_MIN_INTERVAL_SEC}秒以内です。しばらくしてからもう一度お試しください。` }),
+          { status: 429, headers: { "content-type": "application/json", ...CORS_HEADERS } },
+        );
+      }
+    }
+
     const accessToken = await getGoogleAccessToken();
+    let aiCallsLeft = MAX_AI_CALLS_PER_RUN;
 
     const [
       { data: cards, error: cardsErr },
@@ -460,7 +497,11 @@ Deno.serve(async (req: Request) => {
       { data: categoryRows, error: categoriesErr },
       { data: subcategoryRows, error: subcategoriesErr },
     ] = await Promise.all([
-      admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true),
+      // 画面からの実行は本人のカードだけを対象にする（他のユーザーのCSVを取り込ませない）
+      (() => {
+        const q = admin.from("cards").select("id, user_id, name, issuer").eq("is_active", true);
+        return callerUserId ? q.eq("user_id", callerUserId) : q;
+      })(),
       admin.from("csv_import_profiles").select("*"),
       admin.from("merchant_categories").select("user_id, keyword, category_name, subcategory_name, priority, source"),
       admin.from("categories").select("user_id, name, sort_order").order("sort_order", { ascending: true }),
@@ -557,7 +598,8 @@ Deno.serve(async (req: Request) => {
             let categorySource: string | null = resolved?.source ?? null;
 
             // 2. 一致しない「初めての利用先」だけ、Cloudflare Workers AIに判定してもらう
-            if (!category) {
+            if (!category && aiCallsLeft > 0) {
+              aiCallsLeft--;
               const aiChoice = await classifyWithAI(
                 r.merchant,
                 categoryListByUser.get(card.user_id) ?? [],
@@ -652,7 +694,9 @@ Deno.serve(async (req: Request) => {
       headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: errorMessage(e).slice(0, 500) }), {
+    // 詳細はサーバーのログにだけ残し、呼び出し元には内部情報（APIの応答など）を返さない
+    console.error("import-csv failed:", errorMessage(e));
+    return new Response(JSON.stringify({ ok: false, error: "取り込み中にエラーが発生しました。自動取得ログを確認してください。" }), {
       status: 500,
       headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
