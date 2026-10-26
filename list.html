@@ -79,6 +79,9 @@
   button.btn-mini.btn-special-on { background: #FDECC8; border-color: #E0A43A; color: #8A5A00; }
   .chip-toggle.special.active { background: #8A5A00; border-color: #8A5A00; }
 
+  button.sort-head { padding: 0; border: none; background: none; font: inherit; color: inherit; cursor: pointer; }
+  button.sort-head:hover { color: var(--text); }
+
   button.btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--border-light); border-radius: 8px; background: #FFFFFF; color: var(--text-sub); font-size: 12px; font-weight: 500; cursor: pointer; }
   button.btn-primary { border: none; background: var(--blue); color: #FFFFFF; font-weight: 700; }
 
@@ -152,12 +155,13 @@
       <div class="tabs" id="status-tabs"></div>
       <button type="button" class="chip-toggle" id="shared-filter-toggle">清算対象のみ</button>
       <button type="button" class="chip-toggle special" id="special-filter-toggle">特別な出費のみ</button>
+      <button type="button" class="chip-toggle" id="date-sort-toggle"></button>
       <span class="count" id="row-count"></span>
     </div>
 
     <section class="panel">
       <div class="row head">
-        <span class="col-date">日付</span>
+        <span class="col-date"><button type="button" class="sort-head" id="date-sort-head"></button></span>
         <span class="col-card">カード</span>
         <span class="col-merchant">利用先</span>
         <span class="col-category">分類</span>
@@ -170,7 +174,7 @@
       <div id="empty" class="empty hidden">この条件に一致する明細はありません。</div>
     </section>
 
-    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「AI推定（要確認）」はAIが推測しただけでまだ人間が確認していないカテゴリです。合っていればそのまま保存、違っていれば直してから保存してください（一度保存すれば次回から確定扱いになります）。「要確認」は金額や日付の形式が想定外で自動取込できなかった明細です。内容を直して「確定」を押すと集計対象になります。旅行や家電など一度きりの支払いは「特別な出費」を押しておくと、分析で「ふだんの生活費」と分けて見られます。</p>
+    <p class="lead">初めての利用先は「カテゴリ未設定」になります。分類を選んで保存すると、次回以降は同じ利用先が自動的に分類されます。「AI推定（要確認）」はAIが推測しただけでまだ人間が確認していないカテゴリです。合っていればそのまま保存、違っていれば直してから保存してください（一度保存すれば次回から確定扱いになります）。「要確認」タブには、金額や日付の形式が想定外で自動取込できなかった明細と、カテゴリ未設定・AI推定のままの明細がまとめて表示されます。形式エラーの明細は内容を直して「確定」を押すと集計対象になります。旅行や家電など一度きりの支払いは「特別な出費」を押しておくと、分析で「ふだんの生活費」と分けて見られます。</p>
   </main>
 
 <script>
@@ -188,6 +192,7 @@
     statusFilter: 'all',
     sharedOnly: false,
     specialOnly: false,
+    dateAsc: true,
     rows: [],
     loading: true,
     editingIds: new Set(),
@@ -200,6 +205,8 @@
   const statusTabsEl = document.getElementById('status-tabs');
   const sharedFilterToggle = document.getElementById('shared-filter-toggle');
   const specialFilterToggle = document.getElementById('special-filter-toggle');
+  const dateSortToggle = document.getElementById('date-sort-toggle');
+  const dateSortHead = document.getElementById('date-sort-head');
   const rowCountEl = document.getElementById('row-count');
   const loadingRow = document.getElementById('loading-row');
   const rowsEl = document.getElementById('rows');
@@ -244,6 +251,9 @@
     statusTabsEl.querySelectorAll('button').forEach((btn) => {
       btn.addEventListener('click', () => { state.statusFilter = btn.dataset.statusFilter; loadRows(); });
     });
+
+    dateSortToggle.textContent = state.dateAsc ? '日付：古い順 ↑' : '日付：新しい順 ↓';
+    dateSortHead.textContent = state.dateAsc ? '日付 ↑' : '日付 ↓';
   }
 
   function escapeHtml(s) {
@@ -316,9 +326,11 @@
         actionCell = `<button type="button" class="btn" data-action="edit" data-id="${r.id}">編集</button>`;
       }
 
-      const pillClass = needsReview ? 'pill-review' : 'pill-confirmed';
-      const pillLabel = needsReview ? '要確認' : '確定';
-      const pillDot = needsReview ? '#FAB219' : '#0CA30C';
+      // 「要確認」タブの絞り込み条件（loadRows）と揃える
+      const pillNeedsReview = needsReview || needsCategory || needsAiConfirm;
+      const pillClass = pillNeedsReview ? 'pill-review' : 'pill-confirmed';
+      const pillLabel = pillNeedsReview ? '要確認' : '確定';
+      const pillDot = pillNeedsReview ? '#FAB219' : '#0CA30C';
       const categoryBadge = needsCategory
         ? `<span class="pill pill-category"><span class="dot" style="background:#7C4DBE;"></span>カテゴリ未設定</span>`
         : needsAiConfirm
@@ -546,10 +558,19 @@
       .from('card_statements')
       .select('*')
       .eq('billing_month', isoMonthStart(state.year, state.month))
-      .order('used_date', { ascending: true });
+      .order('used_date', { ascending: state.dateAsc })
+      .order('id', { ascending: true });
 
     if (state.cardFilter !== 'all') query = query.eq('card_id', state.cardFilter);
-    if (state.statusFilter !== 'all') query = query.eq('status', state.statusFilter);
+    // 「要確認」は取込時の形式エラーに加えて、カテゴリ未設定・AI推定のまま未確認の明細も含める
+    // （一覧で「カテゴリ未設定」「AI推定（要確認）」のバッジが付く行と揃える）。
+    // 「確定」はその逆で、人間の確認が済んだ明細だけにする。
+    if (state.statusFilter === 'needs_review') {
+      query = query.or('status.eq.needs_review,category.is.null,category_source.eq.ai');
+    } else if (state.statusFilter === 'confirmed') {
+      query = query.eq('status', 'confirmed').not('category', 'is', null)
+        .or('category_source.is.null,category_source.neq.ai');
+    }
     if (state.sharedOnly) query = query.eq('is_shared', true);
     if (state.specialOnly) query = query.eq('is_special', true);
 
@@ -571,6 +592,13 @@
     specialFilterToggle.classList.toggle('active', state.specialOnly);
     loadRows();
   });
+
+  function toggleDateSort() {
+    state.dateAsc = !state.dateAsc;
+    loadRows();
+  }
+  dateSortToggle.addEventListener('click', toggleDateSort);
+  dateSortHead.addEventListener('click', toggleDateSort);
 
   sharedFilterToggle.addEventListener('click', () => {
     state.sharedOnly = !state.sharedOnly;
