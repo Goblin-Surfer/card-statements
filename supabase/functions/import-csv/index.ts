@@ -451,6 +451,36 @@ Deno.serve(async (req: Request) => {
     // ここから先はすべて service_role 相当の権限（RLSを迂回）で実行
     const admin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
+    // 半自動版が読み取った実際の締め日を記録するだけの呼び出し（取り込みはしない）。
+    // 例: {"closing_dates": {"issuer": "amex", "dates": ["2026-09-18", "2026-10-16"]}}
+    // 記録されると card_closing_dates のトリガーがそのカードの明細の支払月を計算し直す。
+    const body = await req.json().catch(() => ({}));
+    if (body?.closing_dates) {
+      const { issuer, dates } = body.closing_dates;
+      const validDates = Array.isArray(dates) ? dates.filter((d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
+      if (typeof issuer !== "string" || validDates.length === 0) {
+        return new Response(JSON.stringify({ ok: false, error: "closing_dates needs issuer and dates (YYYY-MM-DD)" }), {
+          status: 400,
+          headers: { "content-type": "application/json", ...CORS_HEADERS },
+        });
+      }
+      const { data: issuerCards, error: issuerCardsErr } = await admin.from("cards").select("id").eq("issuer", issuer);
+      if (issuerCardsErr) throw issuerCardsErr;
+      const rows = (issuerCards ?? []).flatMap((c: { id: string }) => validDates.map((d: string) => ({ card_id: c.id, closing_date: d })));
+      let added = 0;
+      if (rows.length > 0) {
+        const { data: inserted, error } = await admin
+          .from("card_closing_dates")
+          .upsert(rows, { onConflict: "card_id,closing_date", ignoreDuplicates: true })
+          .select("card_id");
+        if (error) throw error;
+        added = inserted?.length ?? 0;
+      }
+      return new Response(JSON.stringify({ ok: true, closing_dates: { issuer, cards: issuerCards?.length ?? 0, added } }), {
+        headers: { "content-type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
     const accessToken = await getGoogleAccessToken();
 
     const [

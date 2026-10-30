@@ -268,38 +268,29 @@
     return state.cards.find((c) => c.id === cardSelect.value);
   }
 
-  // Amex は毎月の締め日が土日祝なら直前の平日に締まる（例: 2026/10 は18日が日曜で16日締め）。
-  // 月の中旬にかかる祝日はハッピーマンデーの4つだけなので、それだけを見る。
-  // DB の compute_billing_month と同じルール。
-  function closingDayOf(card, y, m) {
-    let day = card.closing_day;
-    if (card.issuer !== 'amex') return day;
-    const happyMondayWeek = { 1: 2, 7: 3, 9: 3, 10: 2 }; // 成人の日・海の日・敬老の日・スポーツの日
-    for (;;) {
-      const wd = new Date(y, m - 1, day).getDay();
-      const isHoliday = wd === 1 && happyMondayWeek[m] === Math.ceil(day / 7);
-      if (wd !== 0 && wd !== 6 && !isHoliday) return day;
-      day -= 1;
+  // 支払月は DB の compute_billing_month で計算する（保存時のトリガーと同じ計算。
+  // Amex のように締め日が月ごとに動くカードは、記録された実際の締め日を使う）。
+  let previewRequest = 0;
+  async function updateBillingPreview(card, dateStr) {
+    const request = ++previewRequest;
+    if (!card || !dateStr) {
+      previewBilling.textContent = 'カードと利用日を選択すると自動計算されます';
+      return;
     }
-  }
-
-  function billingMonthLabel(card, dateStr) {
-    if (!card || !dateStr) return null;
-    const d = new Date(dateStr + 'T00:00:00');
-    if (isNaN(d.getTime())) return null;
-    let y = d.getFullYear();
-    let m = d.getMonth() + 1;
-    const lag = card.closes_at_month_end ? 1 : (d.getDate() <= closingDayOf(card, y, m) ? 1 : 2);
-    m += lag;
-    while (m > 12) { m -= 12; y += 1; }
-    return y + '年' + m + '月支払';
+    const { data, error } = await supabaseClient.rpc('compute_billing_month', { p_card_id: card.id, p_used_date: dateStr });
+    if (request !== previewRequest) return; // 計算中にカードか利用日が変わった
+    if (error || !data) {
+      previewBilling.textContent = '支払月を計算できませんでした';
+      return;
+    }
+    const [y, m] = data.split('-');
+    previewBilling.textContent = y + '年' + Number(m) + '月支払';
   }
 
   function updatePreview() {
     const card = selectedCard();
     cardDot.style.background = card ? cardColor(card.id) : '#8A7F63';
-    const label = billingMonthLabel(card, dateInput.value);
-    previewBilling.textContent = label || 'カードと利用日を選択すると自動計算されます';
+    updateBillingPreview(card, dateInput.value);
     updateSaveEnabled();
   }
 
